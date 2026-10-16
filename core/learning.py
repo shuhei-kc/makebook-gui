@@ -1,6 +1,7 @@
 """Learning from tayayan/HiraganaSuisho makebook2.py (MIT).
 See docs/ALGORITHM.md and docs/upstream for the pinned source.
 """
+
 from __future__ import annotations
 
 from copy import deepcopy
@@ -21,15 +22,33 @@ def candidate_id(key, move):
 
 def read_book(path):
     book, key = {}, None
-    for raw in Path(path).read_text(encoding="utf-8").splitlines():
-        fields = raw.split()
-        if not fields or raw.startswith("#"):
-            continue
-        if fields[0] == "sfen":
-            key = " ".join(fields[1:4])
-            book.setdefault(key, {})
-        elif key is not None:
-            book[key][fields[0]] = int(fields[4])
+    # Four-column records omit the adoption count; imports start at one.
+    # Do not silently discard undecodable bytes or malformed move records.
+    try:
+        with Path(path).open(encoding="utf-8-sig") as handle:
+            for number, raw in enumerate(handle, 1):
+                fields = raw.split()
+                if not fields or fields[0].startswith("#"):
+                    continue
+                if fields[0] == "sfen":
+                    if len(fields) not in (4, 5):
+                        raise ValueError(f"定跡DB {number}行目: SFENの形式が不正です")
+                    key = " ".join(fields[1:4])
+                    book.setdefault(key, {})
+                else:
+                    if key is None or len(fields) < 4:
+                        raise ValueError(
+                            f"定跡DB {number}行目: 指し手行には4列以上が必要です"
+                        )
+                    try:
+                        count = int(fields[4]) if len(fields) >= 5 else 1
+                    except ValueError as error:
+                        raise ValueError(
+                            f"定跡DB {number}行目: 採用数が整数ではありません"
+                        ) from error
+                    book[key][fields[0]] = count
+    except UnicodeError as error:
+        raise ValueError("定跡DBはUTF-8で保存してください") from error
     return {key: moves for key, moves in book.items() if moves}
 
 
@@ -58,8 +77,18 @@ def replay_legacy(directory):
     kifs = sorted(directory.glob("kif*.sfen"))
     if len(kifs) != 1:
         raise ValueError("Expected exactly one saved kif stream")
-    lines = [line.split()[2:] for line in kifs[0].read_text(encoding="utf-8").splitlines() if line.strip()]
-    outcomes = [json.loads(line) for line in (directory / "outcomes.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+    lines = [
+        line.split()[2:]
+        for line in kifs[0].read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    outcomes = [
+        json.loads(line)
+        for line in (directory / "outcomes.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
     if len(lines) != len(outcomes):
         raise ValueError("Saved kif/outcome lengths differ")
     book, board = {}, cshogi.Board()
@@ -86,41 +115,57 @@ class Candidates:
         self.state = deepcopy(state or {})
         self.by_key = {}
         for row in self.state.values():
-            self.by_key.setdefault(row['key'],{})[row['id']]=row
+            self.by_key.setdefault(row["key"], {})[row["id"]] = row
 
     def apply(self, changes):
-        for identity,row in changes.items():
-            row=deepcopy(row)
-            self.state[identity]=row
-            self.by_key.setdefault(row['key'],{})[identity]=row
+        for identity, row in changes.items():
+            row = deepcopy(row)
+            self.state[identity] = row
+            self.by_key.setdefault(row["key"], {})[identity] = row
 
     def rows(self, key):
-        return self.by_key.get(key,{}).values()
+        return self.by_key.get(key, {}).values()
 
     def active(self, key):
-        return [row for row in self.rows(key) if row['active']]
+        return [row for row in self.rows(key) if row["active"]]
 
     def register(self, key, move, reactivate=False, legacy_count=0):
         identity = candidate_id(key, move)
         row = self.state.get(identity)
         if row is None:
             row = self.state[identity] = {
-                "id": identity, "key": key, "move": move, "generation": 1,
-                "active": True, "wins": 0, "lifetime_wins": 0,
-                "games": 0, "visits": 0, "weight": 1.0,
-                "legacy_count": legacy_count, "reason": "registered",
+                "id": identity,
+                "key": key,
+                "move": move,
+                "generation": 1,
+                "active": True,
+                "wins": 0,
+                "lifetime_wins": 0,
+                "games": 0,
+                "visits": 0,
+                "weight": 1.0,
+                "legacy_count": legacy_count,
+                "reason": "registered",
             }
-            self.by_key.setdefault(key,{})[identity]=row
+            self.by_key.setdefault(key, {})[identity] = row
         elif reactivate and not row["active"]:
-            row.update(generation=row["generation"] + 1, active=True,
-                       wins=0, reason="manual_reactivation")
+            row.update(
+                generation=row["generation"] + 1,
+                active=True,
+                wins=0,
+                reason="manual_reactivation",
+            )
         return row
 
     def selection(self, key, move, source, info=None):
         row = self.state.get(candidate_id(key, move))
-        return {"key": key, "move": move, "source": source,
-                "generation": row["generation"] if row else None,
-                "info": info}
+        return {
+            "key": key,
+            "move": move,
+            "source": source,
+            "generation": row["generation"] if row else None,
+            "info": info,
+        }
 
     def learn(self, selections, winner, game_id, policy="legacy_backtrack"):
         if policy != "legacy_backtrack":
@@ -137,18 +182,30 @@ class Candidates:
         ordinary = list(selections)
         touched = {candidate_id(item["key"], item["move"]) for item in ordinary}
         before = {identity: deepcopy(self.state.get(identity)) for identity in touched}
-        book = {key: {row["move"]: row["wins"] for row in rows.values() if row["active"]}
-                for key, rows in self.by_key.items()}
+        book = {
+            key: {row["move"]: row["wins"] for row in rows.values() if row["active"]}
+            for key, rows in self.by_key.items()
+        }
         book = {key: moves for key, moves in book.items() if moves}
         seen = set()
         for item in ordinary:
             identity = candidate_id(item["key"], item["move"])
             row = self.state.get(identity)
             if row is None:
-                row = {"id": identity, "key": item["key"], "move": item["move"],
-                       "generation": 0, "active": False, "wins": 0,
-                       "lifetime_wins": 0, "games": 0, "visits": 0,
-                       "weight": 1.0, "legacy_count": 0, "reason": "observed"}
+                row = {
+                    "id": identity,
+                    "key": item["key"],
+                    "move": item["move"],
+                    "generation": 0,
+                    "active": False,
+                    "wins": 0,
+                    "lifetime_wins": 0,
+                    "games": 0,
+                    "visits": 0,
+                    "weight": 1.0,
+                    "legacy_count": 0,
+                    "reason": "observed",
+                }
                 self.state[identity] = row
                 self.by_key.setdefault(item["key"], {})[identity] = row
             row["visits"] += 1
@@ -164,11 +221,16 @@ class Candidates:
                 count = book.get(row["key"], {}).get(row["move"])
                 if count is not None:
                     if not row["active"]:
-                        row.update(generation=row["generation"] + 1,
-                                   reason="legacy_win_restore")
+                        row.update(
+                            generation=row["generation"] + 1,
+                            reason="legacy_win_restore",
+                        )
                         row.pop("disabled_by", None)
                     row.update(active=True, wins=count)
                 elif row["active"]:
                     row.update(active=False, reason="lost", disabled_by=game_id)
-        return {identity: deepcopy(self.state[identity]) for identity in touched
-                if self.state[identity] != before.get(identity)}
+        return {
+            identity: deepcopy(self.state[identity])
+            for identity in touched
+            if self.state[identity] != before.get(identity)
+        }

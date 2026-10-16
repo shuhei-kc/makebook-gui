@@ -74,6 +74,6 @@ def serve_campaign(config,max_games,run=None,own_process=False):
                     finally:store.close()
             except Exception as persistence_error:
                 sink.write('Fault persistence failed: '+repr(persistence_error)+'\n')
-            # Task Scheduler has three bounded restarts. Persisted pause prevents
+            # Persisted pause prevents an external process supervisor from
             # new games after an unexpected failure; damaged recovery fails closed.
             return 1

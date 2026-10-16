@@ -11,6 +11,7 @@ import threading
 import time
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -20,16 +21,27 @@ from core.store import Store
 
 
 def upstream_oracle(book, selections, loser):
-    source = ast.parse((ROOT / "docs/upstream/makebook2.py").read_text(encoding="utf-8-sig"))
-    loops = [n for n in ast.walk(source) if isinstance(n, ast.For) and
-             ast.unparse(n.iter) == "reversed(tempbook)"]
+    source = ast.parse(
+        (ROOT / "docs/upstream/makebook2.py").read_text(encoding="utf-8-sig")
+    )
+    loops = [
+        n
+        for n in ast.walk(source)
+        if isinstance(n, ast.For) and ast.unparse(n.iter) == "reversed(tempbook)"
+    ]
     # Importing the original script would prompt and start engines. Compile only
     # its unchanged learning loop instead of reimplementing the expected result.
-    code = compile(ast.Module(body=[loops[0]], type_ignores=[]), "makebook2-learning", "exec")
+    code = compile(
+        ast.Module(body=[loops[0]], type_ignores=[]), "makebook2-learning", "exec"
+    )
     key = lambda x: "sfen " + x + " 0"
     obj = SimpleNamespace(book={key(k): deepcopy(v) for k, v in book.items()})
-    env = dict(Shogi=obj, tempbook=[(key(x["key"]), x["move"]) for x in selections],
-               loseturn=loser, bookpass=0)
+    env = dict(
+        Shogi=obj,
+        tempbook=[(key(x["key"]), x["move"]) for x in selections],
+        loseturn=loser,
+        bookpass=0,
+    )
     exec(code, env)
     return {" ".join(k.split()[1:-1]): v for k, v in obj.book.items()}
 
@@ -39,7 +51,9 @@ class LearningTests(unittest.TestCase):
         directory = ROOT / "docs/upstream"
         source = json.loads((directory / "source.json").read_text(encoding="utf-8"))
         for name, expected in source["sha256"].items():
-            self.assertEqual(hashlib.sha256((directory / name).read_bytes()).hexdigest(), expected)
+            self.assertEqual(
+                hashlib.sha256((directory / name).read_bytes()).hexdigest(), expected
+            )
 
     def test_initial_reference_and_import_counts(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -50,26 +64,50 @@ class LearningTests(unittest.TestCase):
             board.push_usi("7g7f")
             board.push_usi("3c3d")
             other = " ".join(board.sfen().split()[:3])
-            book.write_text("#YANEURAOU-DB2016 1.00\nsfen " + initial + " 0\n7g7f none 0 32 999\n2g2f none 0 32 777\nsfen " + other + " 0\n2g2f none 0 32 888\n", encoding="utf-8")
-            settings = app.checked_settings(app.DEFAULTS | {"engine": sys.executable, "book": str(book),
-                                                            "position": "position startpos moves 7g7f 3c3d"})
+            book.write_text(
+                "#YANEURAOU-DB2016 1.00\nsfen "
+                + initial
+                + " 0\n7g7f none 0 32 999\n2g2f none 0 32 777\nsfen "
+                + other
+                + " 0\n2g2f none 0 32 888\n",
+                encoding="utf-8",
+            )
+            settings = app.checked_settings(
+                app.DEFAULTS
+                | {
+                    "engine": sys.executable,
+                    "book": str(book),
+                    "position": "position startpos moves 7g7f 3c3d",
+                }
+            )
             for fixed in [False, True]:
                 settings["fixed_side"] = "b" if fixed else ""
                 session = directory / ("fixed" if fixed else "learned")
                 session.mkdir()
                 cfg_path = session / "campaign.json"
-                cfg_path.write_text(json.dumps(app.campaign(settings, session)), encoding="utf-8")
+                cfg_path.write_text(
+                    json.dumps(app.campaign(settings, session)), encoding="utf-8"
+                )
                 config = app.load_config(cfg_path)
                 app.initialize_book(config)
                 store = Store(Path(config["runtime_state_dir"]) / "state.sqlite3")
                 try:
                     state = store.candidates()
                     if fixed:
-                        self.assertEqual(sorted(r["wins"] for r in state.values()), [1000, 1000])
-                        self.assertEqual(config["fixed_rules"][0]["moves"][0]["usi"], "7g7f")
+                        self.assertEqual(
+                            sorted(r["wins"] for r in state.values()), [1000, 1000]
+                        )
+                        self.assertEqual(
+                            config["fixed_rules"][0]["moves"][0]["usi"], "7g7f"
+                        )
                     else:
-                        self.assertEqual(sorted(r["wins"] for r in state.values()), [1, 1000, 1000])
-                        self.assertEqual([r["move"] for r in state.values() if r["key"] == initial], ["7g7f"])
+                        self.assertEqual(
+                            sorted(r["wins"] for r in state.values()), [1, 1000, 1000]
+                        )
+                        self.assertEqual(
+                            [r["move"] for r in state.values() if r["key"] == initial],
+                            ["7g7f"],
+                        )
                 finally:
                     store.close()
 
@@ -77,11 +115,18 @@ class LearningTests(unittest.TestCase):
         rng = random.Random(54)
         keys = [f"board{i} {side} -" for i in range(7) for side in ("b", "w")]
         for _ in range(500):
-            before = {k: {f"move{m}": rng.randint(1, 1000) for m in range(rng.randint(1, 3))}
-                      for k in rng.sample(keys, rng.randint(0, len(keys)))}
-            selections = [dict(key=rng.choice(keys), move="move" + str(rng.randrange(4)),
-                               source=rng.choice(["engine", "book", "fixed"]))
-                          for _ in range(rng.randint(1, 35))]
+            before = {
+                k: {f"move{m}": rng.randint(1, 1000) for m in range(rng.randint(1, 3))}
+                for k in rng.sample(keys, rng.randint(0, len(keys)))
+            }
+            selections = [
+                dict(
+                    key=rng.choice(keys),
+                    move="move" + str(rng.randrange(4)),
+                    source=rng.choice(["engine", "book", "fixed"]),
+                )
+                for _ in range(rng.randint(1, 35))
+            ]
             loser = rng.choice(["b", "w"])
             actual = deepcopy(before)
             legacy_learn(actual, selections, loser)
@@ -94,12 +139,16 @@ class LearningTests(unittest.TestCase):
             for move, count in moves.items():
                 row = learner.register(key, move)
                 row.update(wins=count, generation=9)
-        selections = [dict(key="C w -", move="z", source="fixed", generation=1),
-                      dict(key="A b -", move="x", source="book", generation=1),
-                      dict(key="B w -", move="x", source="engine", generation=None)]
+        selections = [
+            dict(key="C w -", move="z", source="fixed", generation=1),
+            dict(key="A b -", move="x", source="book", generation=1),
+            dict(key="B w -", move="x", source="engine", generation=None),
+        ]
         learner.learn(selections, "b", "test-game")
-        active = {k: {r["move"]: r["wins"] for r in rows.values() if r["active"]}
-                  for k, rows in learner.by_key.items()}
+        active = {
+            k: {r["move"]: r["wins"] for r in rows.values() if r["active"]}
+            for k, rows in learner.by_key.items()
+        }
         active = {k: v for k, v in active.items() if v}
         self.assertEqual(active, upstream_oracle(original, selections, "w"))
         self.assertEqual(active["C w -"]["z"], 9)
@@ -111,7 +160,9 @@ class ServerTests(unittest.TestCase):
         self.app = app.Application(Path(self.tmp.name))
         self.servers = []
         for admin in [True, False]:
-            server = app.ThreadingHTTPServer(("127.0.0.1", 0), app.handler_for(self.app, admin))
+            server = app.ThreadingHTTPServer(
+                ("127.0.0.1", 0), app.handler_for(self.app, admin)
+            )
             self.servers.append(server)
             threading.Thread(target=server.serve_forever, daemon=True).start()
 
@@ -133,8 +184,13 @@ class ServerTests(unittest.TestCase):
         conn = HTTPConnection("127.0.0.1", port, timeout=10)
         headers = {}
         if body is not None:
-            headers = {"Content-Type": "application/json", "Origin": f"http://127.0.0.1:{port}" if valid else "https://other.example",
-                       "X-Makebook-Token": self.app.token}
+            headers = {
+                "Content-Type": "application/json",
+                "Origin": f"http://127.0.0.1:{port}"
+                if valid
+                else "https://other.example",
+                "X-Makebook-Token": self.app.token,
+            }
             body = json.dumps(body)
         conn.request(method, path, body=body, headers=headers)
         result = conn.getresponse()
@@ -148,9 +204,154 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.request("/api/start", "POST", {}, valid=False)[0], 403)
         self.assertEqual(self.request("/../app.py", public=True)[0], 404)
 
+    def test_invalid_json_shape_and_bad_book_return_400(self):
+        for path, value in [
+            ("/api/control", []),
+            ("/api/start", None),
+            ("/api/control", {"operation": []}),
+        ]:
+            # The request helper omits a body for None; use another scalar here.
+            code, data = self.request(path, "POST", value if value is not None else 1)
+            self.assertEqual(code, 400, data)
+            self.assertIn("error", json.loads(data))
+        book = Path(self.tmp.name) / "invalid.db"
+        book.write_text(
+            "sfen "
+            + " ".join(app.cshogi.Board().sfen().split()[:3])
+            + " 1\n7g7f none\n",
+            encoding="utf-8",
+        )
+        code, data = self.request(
+            "/api/start",
+            "POST",
+            app.DEFAULTS | {"engine": sys.executable, "book": str(book)},
+        )
+        self.assertEqual(code, 400, data)
+        self.assertIn("2行目", json.loads(data)["error"])
+        with patch.object(
+            self.app, "start", side_effect=RuntimeError("private detail")
+        ):
+            with self.assertLogs(level="ERROR"):
+                code, data = self.request("/api/start", "POST", {})
+            self.assertEqual(code, 500)
+            self.assertNotIn(b"private detail", data)
+
+    def test_loading_book_does_not_block_status(self):
+        entered, release = threading.Event(), threading.Event()
+
+        def slow_load(_settings):
+            entered.set()
+            release.wait(5)
+            raise ValueError("test validation stopped")
+
+        result = []
+        with patch.object(app, "load_book", side_effect=slow_load):
+            thread = threading.Thread(
+                target=lambda: result.append(
+                    self.request(
+                        "/api/start", "POST", app.DEFAULTS | {"engine": sys.executable}
+                    )
+                )
+            )
+            thread.start()
+            try:
+                self.assertTrue(entered.wait(3))
+                before = time.monotonic()
+                self.assertEqual(self.request("/api/state", public=True)[0], 200)
+                self.assertLess(time.monotonic() - before, 1)
+            finally:
+                release.set()
+                thread.join(5)
+        self.assertEqual(result[0][0], 400)
+
+    def test_fourfold_repetition_excludes_reference_moves(self):
+        prefix = "5i5h 5a5b 5h5i 5b5a " * 3
+        settings = app.DEFAULTS | {
+            "engine": sys.executable,
+            "engine_arguments": [str(ROOT / "tests/fake_engine.py"), "loop"],
+            "position": "position startpos moves " + prefix.strip(),
+            "nodes": 10,
+            "threads": 1,
+            "hash_mb": 16,
+        }
+        self.app.start(settings)
+        self.wait_for_games(1)
+        self.app.control("stop_after_games")
+        self.app.child.wait(timeout=10)
+        store = Store(Path(self.app.config["runtime_state_dir"]) / "state.sqlite3")
+        try:
+            game = json.loads(
+                store.db.execute(
+                    "SELECT payload FROM games WHERE json_extract(payload,'$.completed')=1 ORDER BY rowid LIMIT 1"
+                ).fetchone()[0]
+            )
+            self.assertEqual(game["reason"], "repetition")
+            self.assertEqual(game["repetition_history_start_ply"], 12)
+            self.assertEqual(len(game["moves"]), 24)
+        finally:
+            store.close()
+
+    def test_import_is_read_once_and_resume_does_not_need_original_book(self):
+        book = Path(self.tmp.name) / "input.db"
+        key = " ".join(app.cshogi.Board().sfen().split()[:3])
+        book.write_text("sfen " + key + " 1\n7g7f none 0 32\n", encoding="utf-8")
+        settings = app.DEFAULTS | {
+            "engine": sys.executable,
+            "book": str(book),
+            "engine_arguments": [
+                str(ROOT / "tests/fake_engine.py"),
+                "game_delay",
+                "0.03",
+            ],
+            "nodes": 10,
+            "threads": 1,
+            "hash_mb": 16,
+        }
+        with patch.object(app, "read_book", wraps=app.read_book) as read:
+            self.app.start(settings)
+            self.assertEqual(read.call_count, 1)
+        self.wait_for_games(2)
+        self.app.control("stop_after_games")
+        self.app.child.wait(timeout=10)
+        before = self.app.status()["completed_games"]
+        book.unlink()
+        self.app = app.Application(Path(self.tmp.name))
+        with patch.object(
+            app, "read_book", side_effect=AssertionError("reread import")
+        ):
+            self.app.start(settings)
+        self.wait_for_games(before + 1)
+
+    def test_public_etag_and_gzip(self):
+        port = self.servers[1].server_port
+        connection = HTTPConnection("127.0.0.1", port, timeout=5)
+        connection.request("GET", "/api/tree", headers={"Accept-Encoding": "gzip"})
+        response = connection.getresponse()
+        import gzip
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.getheader("Content-Encoding"), "gzip")
+        self.assertEqual(json.loads(gzip.decompress(response.read()))["count"], 0)
+        etag = response.getheader("ETag")
+        connection.request("GET", "/api/tree", headers={"If-None-Match": etag})
+        response = connection.getresponse()
+        self.assertEqual(response.status, 304)
+        self.assertEqual(response.read(), b"")
+        connection.close()
+
     def test_start_publish_stop_restart_and_download(self):
-        settings = app.DEFAULTS | {"engine": sys.executable, "engine_arguments": [str(ROOT / "tests/fake_engine.py"), "game_delay", "0.03"],
-                                   "nodes": 10, "threads": 1, "hash_mb": 16, "parallel": 2}
+        settings = app.DEFAULTS | {
+            "engine": sys.executable,
+            "engine_arguments": [
+                str(ROOT / "tests/fake_engine.py"),
+                "game_delay",
+                "0.03",
+            ],
+            "nodes": 10,
+            "threads": 1,
+            "hash_mb": 16,
+            "parallel": 2,
+        }
         code, data = self.request("/api/start", "POST", settings)
         self.assertEqual(code, 200, data)
         self.wait_for_games(4)
@@ -188,9 +389,13 @@ class ServerTests(unittest.TestCase):
             if self.app.child and self.app.child.poll() is not None:
                 log = Path(self.app.config["runtime_state_dir"]).parent / "launch.log"
                 self.fail(log.read_text(encoding="utf-8", errors="replace"))
-            time.sleep(.05)
+            time.sleep(0.05)
         runtime = Path(self.app.config["runtime_state_dir"])
-        self.fail((runtime / "manager.log").read_text(encoding="utf-8", errors="replace")[-6000:])
+        self.fail(
+            (runtime / "manager.log").read_text(encoding="utf-8", errors="replace")[
+                -6000:
+            ]
+        )
 
 
 if __name__ == "__main__":

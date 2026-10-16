@@ -1,4 +1,4 @@
-"""Durable file mailbox shared by humans, Codex, and the independent manager."""
+"""Durable file mailbox for controls handled by the independent manager."""
 from __future__ import annotations
 
 from copy import deepcopy

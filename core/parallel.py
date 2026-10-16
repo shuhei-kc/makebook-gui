@@ -326,7 +326,7 @@ class ParallelRunner(Runner):
         finished = attempts = 0
         retry_after = 0
         executor = ThreadPoolExecutor(
-            max_workers=8, thread_name_prefix="makebook5-game"
+            max_workers=8, thread_name_prefix="makebook-game"
         )
         try:
             while True:

@@ -1,4 +1,5 @@
 """Bounded Windows USI transport: stdout reader + queue + monotonic deadlines."""
+
 from __future__ import annotations
 
 import json
@@ -26,8 +27,16 @@ class EngineAborted(EngineError):
 
 
 class Engine:
-    def __init__(self, command, cwd=None, options=None, log_path=None,
-                 init_timeout=120, ready_timeout=600, stop_grace=2):
+    def __init__(
+        self,
+        command,
+        cwd=None,
+        options=None,
+        log_path=None,
+        init_timeout=120,
+        ready_timeout=600,
+        stop_grace=2,
+    ):
         self.command = command
         self.cwd = cwd
         self.options = options or {}
@@ -38,9 +47,9 @@ class Engine:
         self.queue = None
         self.reader = None
         self.log_lock = threading.Lock()
-        self.log_sink=SafeLog(self.log_path) if self.log_path else None
-        self.job=None
-        self.dropped_output=0
+        self.log_sink = SafeLog(self.log_path) if self.log_path else None
+        self.job = None
+        self.dropped_output = 0
 
     @property
     def log_error(self):
@@ -48,44 +57,63 @@ class Engine:
 
     def log(self, direction, line):
         if self.log_sink:
-            self.log_sink.write(json.dumps({'time':time.time(),'direction':direction,'line':line},ensure_ascii=False)+'\n')
+            self.log_sink.write(
+                json.dumps(
+                    {"time": time.time(), "direction": direction, "line": line},
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
 
     def start(self, aborted=None):
         self.close()
         output = self.queue = queue.Queue(maxsize=4096)
-        self.job=ProcessJob()
+        self.job = ProcessJob()
         try:
             self.process = subprocess.Popen(
-            self.command, cwd=self.cwd, stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            encoding="utf-8", errors="replace", bufsize=1,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                self.command,
+                cwd=self.cwd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
         except BaseException:
-            self.job.close();self.job=None
+            self.job.close()
+            self.job = None
             raise
         process = self.process
         try:
             self.job.attach(process)
         except OSError:
-            process.kill();process.wait(timeout=5);self.close();raise
+            process.kill()
+            process.wait(timeout=5)
+            self.close()
+            raise
 
         def enqueue(line):
             try:
                 output.put_nowait(line)
             except queue.Full:
-                self.dropped_output+=1
-                if line is None or not line.startswith('info '):
-                    try:output.get_nowait()
-                    except queue.Empty:pass
+                self.dropped_output += 1
+                if line is None or not line.startswith("info "):
+                    try:
+                        output.get_nowait()
+                    except queue.Empty:
+                        pass
                     output.put_nowait(line)
 
         def read_output():
             try:
                 while True:
-                    line=process.stdout.readline(65536)
-                    if not line:break
-                    line=line.rstrip('\r\n')
-                    self.log('out',line)
+                    line = process.stdout.readline(65536)
+                    if not line:
+                        break
+                    line = line.rstrip("\r\n")
+                    self.log("out", line)
                     enqueue(line)
             finally:
                 enqueue(None)
@@ -106,7 +134,15 @@ class Engine:
                 options["OwnBook"] = False
             if "EnteringKingRule" not in supported:
                 options.pop("EnteringKingRule", None)
-            unknown = options.keys() - supported
+            for name in ("Threads", "ResignValue"):
+                if name in options and name not in supported:
+                    options.pop(name)
+                    self.log(
+                        "warning",
+                        f"{name} is not advertised; engine default will be used",
+                    )
+            # USI_Hash is a reserved GUI option; some engines omit its declaration.
+            unknown = options.keys() - supported - {"USI_Hash"}
             if unknown:
                 raise EngineError(f"Unsupported USI options: {sorted(unknown)}")
             for name, value in options.items():
@@ -181,16 +217,20 @@ class Engine:
             if "score" in fields:
                 index = fields.index("score")
                 if index + 2 < len(fields):
-                    info["score"] = {"kind": fields[index + 1],
-                                     "value": fields[index + 2]}
+                    info["score"] = {
+                        "kind": fields[index + 1],
+                        "value": fields[index + 2],
+                    }
             if "pv" in fields:
-                info["pv"] = fields[fields.index("pv") + 1:]
+                info["pv"] = fields[fields.index("pv") + 1 :]
         return best[1], info
 
     def close(self):
         process = self.process
         if process is None:
-            if self.job:self.job.close();self.job=None
+            if self.job:
+                self.job.close()
+                self.job = None
             return
         if process.poll() is None:
             try:
@@ -200,10 +240,11 @@ class Engine:
                 try:
                     process.kill()
                     process.wait(timeout=5)
-                except (OSError,subprocess.TimeoutExpired):
+                except (OSError, subprocess.TimeoutExpired):
                     pass  # Closing the kernel job below also kills descendants.
         if self.job:
-            self.job.close();self.job=None
+            self.job.close()
+            self.job = None
         if self.reader:
             self.reader.join(timeout=2)
         for handle in (process.stdin, process.stdout):

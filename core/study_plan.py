@@ -40,9 +40,9 @@ def focus_position(config, focus):
     full = prefix + moves
     if full:
         position += ' moves ' + ' '.join(full)
-    _, _, _, keys, checks = position_board(position)
-    from .runner import repetition
-    if repetition(keys, checks) or board.is_game_over():
+    # The whole route is reference context before the actual game start.
+    # Its repeated positions must not make this starting board terminal.
+    if board.is_game_over():
         raise ValueError('Focus is already terminal')
     return position
 

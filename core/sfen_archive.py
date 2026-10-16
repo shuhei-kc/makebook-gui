@@ -1,71 +1,223 @@
-"""Continuously publish every real game as a standard one-line USI SFEN record.
+"""Incremental completed SFEN archive and a separate small live projection.
 
-Completed and current games retain their full legal startpos
-history. A separate index supplies the game ID, actual study start, and outcome.
-Published files are disposable projections; SQLite and the private spool remain
-the recovery inputs. Only the campaign manager writes this archive.
+SQLite and the spool are recovery inputs. A committed byte length and SHA
+allow an interrupted append to be rolled back. Only the manager writes here.
 """
+
+from hashlib import sha256
 import json
+import os
 from pathlib import Path
 import time
+
 from .store import atomic_write
 
 
 def game_line(game):
-    origin = game.get('origin', 'startpos')
-    moves = game.get('moves', [])
-    if '\n' in origin or '\r' in origin or any(not isinstance(m, str) or any(c.isspace() for c in m) for m in moves):
-        raise ValueError('Invalid SFEN export record')
-    return origin + (' moves ' + ' '.join(moves) if moves else '')
+    origin = game.get("origin", "startpos")
+    moves = game.get("moves", [])
+    if (
+        "\n" in origin
+        or "\r" in origin
+        or any(not isinstance(m, str) or any(c.isspace() for c in m) for m in moves)
+    ):
+        raise ValueError("Invalid SFEN export record")
+    return origin + (" moves " + " ".join(moves) if moves else "")
+
+
+def completed_line(game):
+    from .exports import terminal
+
+    return (
+        game_line(game) + ("" if game.get("moves") else " moves") + " " + terminal(game)
+    )
+
+
+def game_rows(connection, after=0):
+    """Read export fields, never selections/info/PV from large payloads."""
+    names = (
+        "game_id",
+        "campaign_id",
+        "origin",
+        "moves",
+        "completed",
+        "focus",
+        "prefix_length",
+        "reason",
+        "rule_result",
+        "research_result",
+        "plan_revision",
+        "settings_revision",
+        "settings",
+    )
+    fields = ",".join(f"'{name}',json_extract(payload,'$.{name}')" for name in names)
+    return connection.execute(
+        f"SELECT rowid,json_object({fields}) FROM games WHERE rowid>? ORDER BY rowid",
+        (after,),
+    )
 
 
 class SfenArchive:
     def __init__(self, config):
         self.config = config
-        self.path = Path(config['sfen_archive']) if config.get('sfen_archive') else None
+        self.path = Path(config["sfen_archive"]) if config.get("sfen_archive") else None
+        self.index = None
+        self.digest = None
         self.signature = None
+        self.needs_index = False
         self.info = {}
+
+    def restore(self, store):
+        index_path = self.path.with_suffix(".index.json")
+        try:
+            index = json.loads(index_path.read_text(encoding="utf-8"))
+            if (
+                index["schema_version"] != 2
+                or index["campaign_id"] != self.config["campaign_id"]
+            ):
+                raise ValueError("Old or foreign archive")
+            cursor = index["last_row"]
+            last = store.db.execute(
+                "SELECT id FROM games WHERE rowid=?", (cursor,)
+            ).fetchone()
+            if cursor and (last is None or last[0] != index["last_id"]):
+                raise ValueError("Archive is ahead of the database")
+            digest = sha256()
+            remaining = index["sfen_bytes"]
+            if remaining < 0:
+                raise ValueError("Invalid archive length")
+            with self.path.open("r+b") as handle:
+                while remaining:
+                    block = handle.read(min(remaining, 1024 * 1024))
+                    if not block:
+                        raise ValueError("Incomplete archive")
+                    digest.update(block)
+                    remaining -= len(block)
+                if digest.hexdigest() != index["sfen_sha256"]:
+                    raise ValueError("Changed archive")
+                handle.truncate(index["sfen_bytes"])
+        except (OSError, ValueError, KeyError, TypeError):
+            atomic_write(self.path, "")
+            digest = sha256()
+            index = dict(
+                schema_version=2,
+                campaign_id=self.config["campaign_id"],
+                last_row=0,
+                last_id=None,
+                sfen_bytes=0,
+                sfen_sha256=digest.hexdigest(),
+                games=[],
+            )
+            self.needs_index = True
+        self.index, self.digest = index, digest
 
     def publish(self, store):
         if self.path is None:
             return {}
-        runtime = Path(self.config['runtime_state_dir'])
-        paths = [runtime / 'in_progress.json']
-        paths += sorted((runtime / 'workers').glob('*/in_progress.json'))
-        live = []
-        for path in paths:
+        index_path = self.path.with_suffix(".index.json")
+        if self.index is None:
+            self.restore(store)
+        index = self.index
+        last = store.db.execute("SELECT COALESCE(MAX(rowid),0) FROM games").fetchone()[
+            0
+        ]
+        if (
+            last < index["last_row"]
+            or not self.path.exists()
+            or self.path.stat().st_size != index["sfen_bytes"]
+        ):
+            self.restore(store)
+            index = self.index
+        if last != index["last_row"] or self.needs_index or not index_path.exists():
+            digest = self.digest.copy()
+            entries = list(index["games"])
+            cursor, last_id = index["last_row"], index["last_id"]
             try:
-                game = json.loads(path.read_text(encoding='utf-8'))
+                with self.path.open("r+b") as handle:
+                    handle.seek(index["sfen_bytes"])
+                    handle.truncate()
+                    for row, payload in game_rows(store.db, cursor):
+                        game = json.loads(payload)
+                        cursor, last_id = row, game["game_id"]
+                        if not game["completed"]:
+                            continue
+                        if game["campaign_id"] != self.config["campaign_id"]:
+                            raise ValueError("SFEN game belongs to another campaign")
+                        content = (completed_line(game) + "\n").encode("utf-8")
+                        handle.write(content)
+                        digest.update(content)
+                        entry = {
+                            k: v
+                            for k, v in game.items()
+                            if k not in ("origin", "moves")
+                        }
+                        entry.update(line=len(entries) + 1, playing=False)
+                        entries.append(entry)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                    size = handle.tell()
+                updated = dict(
+                    index,
+                    last_row=cursor,
+                    last_id=last_id,
+                    games=entries,
+                    sfen_bytes=size,
+                    sfen_sha256=digest.hexdigest(),
+                    updated_unix=time.time(),
+                )
+                atomic_write(index_path, json.dumps(updated, ensure_ascii=False) + "\n")
+            except BaseException:
+                self.index = None
+                raise
+            self.index, self.digest = updated, digest
+            self.needs_index = False
+            index = updated
+
+        runtime = Path(self.config["runtime_state_dir"])
+        live = []
+        for path in [
+            runtime / "in_progress.json",
+            *sorted((runtime / "workers").glob("*/in_progress.json")),
+        ]:
+            try:
+                game = json.loads(path.read_text(encoding="utf-8"))
             except FileNotFoundError:
                 continue
-            if game.get('campaign_id') != self.config['campaign_id']:
-                raise ValueError('SFEN checkpoint belongs to another campaign')
-            if not store.game_exists(game['game_id']):
+            if game.get("campaign_id") != self.config["campaign_id"]:
+                raise ValueError("SFEN checkpoint belongs to another campaign")
+            if not store.game_exists(game["game_id"]):
                 live.append(game)
-        last = store.db.execute('SELECT COALESCE(MAX(rowid),0) FROM games').fetchone()[0]
-        signature = (last, tuple((g['game_id'], len(g['moves'])) for g in live))
-        index_path = self.path.with_suffix('.index.json')
-        if signature == self.signature and self.path.exists() and index_path.exists():
-            return dict(self.info)
-        games = [(json.loads(row[0]), False) for row in store.db.execute(
-            "SELECT payload FROM games WHERE json_extract(payload,'$.completed')=1 ORDER BY rowid")]
-        games += [(game, True) for game in live]
-        lines = [game_line(game) for game, _ in games]
-        from hashlib import sha256
-        content = ''.join(line + '\n' for line in lines)
-        index = {'schema_version': 1, 'campaign_id': self.config['campaign_id'], 'updated_unix': time.time(),
-                 'sfen_sha256': sha256(content.encode('utf-8')).hexdigest(), 'games': []}
-        for number, (game, playing) in enumerate(games, 1):
-            index['games'].append(dict(line=number, game_id=game['game_id'],
-                                       focus=game.get('focus'), start_ply=game.get('prefix_length'),
-                                       playing=playing, completed=game.get('completed', False),
-                                       rule_result=game.get('rule_result', 'unresolved'),
-                                       research_result=game.get('research_result', 'unresolved'),
-                                       reason=game.get('reason'), plan_revision=game.get('plan_revision'),
-                                       settings_revision=game.get('settings_revision'),settings=game.get('settings')))
-        atomic_write(self.path, content)
-        atomic_write(index_path, json.dumps(index, ensure_ascii=False, indent=2) + '\n')
-        self.info = dict(path=str(self.path), index_path=str(index_path), games=len(games),
-                         playing=len(live), updated_unix=index['updated_unix'])
-        self.signature = signature
+        signature = tuple((g["game_id"], tuple(g["moves"])) for g in live)
+        live_path = self.path.with_suffix(".live.sfen")
+        if signature != self.signature or not live_path.exists():
+            atomic_write(live_path, "".join(game_line(g) + "\n" for g in live))
+            atomic_write(
+                self.path.with_suffix(".live.index.json"),
+                json.dumps(
+                    {
+                        "campaign_id": self.config["campaign_id"],
+                        "updated_unix": time.time(),
+                        "games": [
+                            {
+                                "line": i,
+                                "game_id": g["game_id"],
+                                "playing": True,
+                                "start_ply": g.get("prefix_length"),
+                            }
+                            for i, g in enumerate(live, 1)
+                        ],
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+            )
+            self.signature = signature
+        self.info = dict(
+            path=str(self.path),
+            index_path=str(index_path),
+            live_path=str(live_path),
+            games=len(index["games"]),
+            playing=len(live),
+            updated_unix=time.time(),
+        )
         return dict(self.info)
