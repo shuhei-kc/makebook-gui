@@ -83,6 +83,11 @@ dialog::backdrop {
 #message:empty {
   display: none;
 }
+.field-help {
+  color: var(--muted);
+  font-size: 12px;
+  margin: -3px 0 12px;
+}
 .sharing {
   display: grid;
   gap: 4px;

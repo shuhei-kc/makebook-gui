@@ -161,6 +161,69 @@ class ProjectionTests(unittest.TestCase):
                 any("select payload from games" in q.lower() for q in queries)
             )
 
+    def test_full_tree_keeps_input_route_and_task_tree_owns_continuation(self):
+        prefix = ["7g7f", "3c3d"]
+        route = prefix + ["2g2f", "8c8d"]
+        config = self.config | {
+            "start_position": "position startpos moves " + " ".join(prefix),
+            "sequential_study": {
+                "target_black_streak": 100,
+                "focuses": [{"id": "task-01", "label": "課題1", "moves": route[2:]}],
+            },
+        }
+        self.game(
+            "task-game",
+            moves=route + ["2f2e"],
+            prefix_length=4,
+            focus={"id": "task-01"},
+        )
+        publication = Publications()
+        full = json.loads(publication.read(config, "tree").body)
+        task = json.loads(publication.read(config, "task:task-01").body)
+        self.assertEqual(full["base"], 0)
+        self.assertEqual(full["prefix"], [])
+        self.assertEqual([n["move"] for n in full["nodes"][1:]], route)
+        self.assertEqual(full["tasks"][0]["node"], " ".join(route))
+        self.assertEqual(full["tasks"][0]["ply"], 4)
+        self.assertEqual(task["base"], 4)
+        self.assertEqual(task["prefix"], route)
+        self.assertEqual([n["move"] for n in task["nodes"][1:]], ["2f2e"])
+
+    def test_start_position_alone_also_creates_a_view_boundary(self):
+        prefix = ["7g7f", "3c3d"]
+        config = self.config | {
+            "start_position": "position startpos moves " + " ".join(prefix)
+        }
+        self.game(
+            "start-only",
+            moves=prefix + ["2g2f"],
+            prefix_length=2,
+            focus={"id": "anchor"},
+        )
+        publication = Publications()
+        full = json.loads(publication.read(config, "tree").body)
+        task = json.loads(publication.read(config, "task:anchor").body)
+        self.assertEqual([n["move"] for n in full["nodes"][1:]], prefix)
+        self.assertEqual(full["tasks"][0]["node"], " ".join(prefix))
+        self.assertEqual(task["prefix"], prefix)
+        self.assertEqual(task["nodes"][1]["move"], "2g2f")
+        self.assertEqual(full["tasks"][0]["black_streak"], 1)
+        self.assertNotIn("sequential_study", config)
+
+    def test_initial_and_sfen_origins_do_not_invent_a_reference_history(self):
+        import cshogi
+
+        board = cshogi.Board()
+        board.push_usi("7g7f")
+        board.push_usi("3c3d")
+        for origin, ply in (("startpos", 0), ("sfen " + board.sfen(), 2)):
+            config = self.config | {"start_position": "position " + origin}
+            publication = Publications()
+            full = json.loads(publication.read(config, "tree").body)
+            self.assertEqual(len(full["nodes"]), 1)
+            self.assertEqual(full["tasks"][0]["node"], "")
+            self.assertEqual(full["tasks"][0]["ply"], ply)
+
     def test_concurrent_downloads_share_one_build_and_do_not_lock_control(self):
         publications = Publications()
         entered, release = threading.Event(), threading.Event()

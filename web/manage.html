@@ -200,10 +200,18 @@
             placeholder="C:/engine/YaneuraOu.exe"
         /></label>
         <label
-          >開始局面（USI）<textarea name="position" rows="2" required>
+          >共通起点（USI・通常は position startpos）<textarea
+            name="position"
+            rows="2"
+            required
+          >
 position startpos</textarea
           >
         </label>
+        <p class="field-help">
+          通常は position startpos
+          のまま使います。課題局面のUSIは、下の「課題を追加」から入力してください。
+        </p>
         <div class="fields">
           <label
             >1手の探索ノード数<input
@@ -287,8 +295,8 @@ position startpos</textarea
           <div id="task-editor"></div>
           <button class="btn" id="add-task" type="button">課題を追加</button>
           <p>
-            追加手順は共通起点からのUSI指し手です。共通起点につながる position
-            形式の手順も指定できます。
+            課題局面のUSI（position startpos moves
+            …）を入力できます。共通起点からの追加手順だけでも指定できます。
           </p>
         </fieldset>
         <label class="checkbox-setting">

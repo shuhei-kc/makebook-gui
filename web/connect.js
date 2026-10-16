@@ -81,7 +81,11 @@ function displayedTree(data, games) {
   }
   for (const game of Object.values(games)) {
     if (game.ended) continue;
-    const moves = game.moveList.slice(data.prefix.length);
+    const boundary = data.tasks?.find((task) => task.id === game.focus_id);
+    const moves = game.moveList.slice(
+      data.prefix.length,
+      boundary ? game.prefix : undefined,
+    );
     let parent = 0;
     const seen = new Set([0]);
     for (const move of moves) {
@@ -359,9 +363,10 @@ async function poll(signal) {
       ).length;
       return {
         ...task,
-        status: progress?.status || "pending",
-        streak: progress?.black_streak || 0,
-        best: progress?.best_black_streak || 0,
+        status:
+          progress?.status || (raw.phase === "stopped" ? "stopped" : "running"),
+        streak: progress?.black_streak ?? task.black_streak ?? 0,
+        best: progress?.best_black_streak ?? task.best_black_streak ?? 0,
         recorded: task.games + playing,
       };
     }),

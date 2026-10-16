@@ -364,6 +364,7 @@ const TASK_STATE = {
   passed: "完了",
   verified: "検証完了",
   skipped: "飛ばし",
+  stopped: "停止済み",
 };
 
 function renderTask(s) {
@@ -404,7 +405,7 @@ function renderTask(s) {
   const target = s.streak_target;
   const bar = target ? `<span class="progress"><i ></i></span>` : "";
   $("task-stats").innerHTML =
-    `<span class="streak">先手連勝 ${bar}<b>${t.streak}</b>/${target ?? "—"}</span>` +
+    `<span class="streak">先手連勝 ${bar}<b>${t.streak}</b>${target ? "/" + target : ""}</span>` +
     `<span>最長 <b>${t.best}</b></span>` +
     `<span>先手 <b>${t.wins}</b>勝 <b>${t.losses}</b>敗</span>` +
     `<span>探索 <b>${Number(s.nodes).toLocaleString()}</b>/手</span>`;

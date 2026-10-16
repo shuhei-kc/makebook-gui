@@ -18,7 +18,7 @@ async function manage() {
     row.className = "task-edit";
     row.dataset.id = task.id || "task-" + crypto.randomUUID().slice(0, 8);
     row.innerHTML =
-      '<div class="task-edit-head"><label>課題名<input class="task-label" required></label><button type="button" class="btn task-up" aria-label="課題を上へ">↑</button><button type="button" class="btn task-down" aria-label="課題を下へ">↓</button><button type="button" class="btn task-remove" aria-label="課題を削除">削除</button></div><label>共通起点からの追加手順<textarea class="task-moves" rows="2" placeholder="例：7g7f 3c3d（空欄なら共通起点）"></textarea></label>';
+      '<div class="task-edit-head"><label>課題名<input class="task-label" required></label><button type="button" class="btn task-up" aria-label="課題を上へ">↑</button><button type="button" class="btn task-down" aria-label="課題を下へ">↓</button><button type="button" class="btn task-remove" aria-label="課題を削除">削除</button></div><label>課題局面（USI／共通起点からの追加手順）<textarea class="task-moves" rows="2" placeholder="例：position startpos moves 7g7f 3c3d"></textarea></label>';
     row.querySelector(".task-label").value = task.label || "";
     row.querySelector(".task-moves").value = Array.isArray(task.moves)
       ? task.moves.join(" ")

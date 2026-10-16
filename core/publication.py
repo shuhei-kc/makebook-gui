@@ -47,14 +47,22 @@ class Publications:
         self.task_lines = {}
         self.tasks = []
 
+    @staticmethod
+    def focuses(config):
+        return (config or {}).get("sequential_study", {}).get("focuses") or [
+            {"id": "anchor", "label": "開始局面", "moves": []}
+        ]
+
     def prepare_trees(self, config):
-        self.tree = ViewTree(config)
-        for number, focus in enumerate(
-            config.get("sequential_study", {}).get("focuses", []), 1
-        ):
-            index, _ = self.tree.walk(focus["moves"], reference=True)
+        start_tree = ViewTree(config)
+        self.tree = ViewTree(
+            config | {"start_position": "position " + start_tree.origin}
+        )
+        self.tree.walk(start_tree.prefix, reference=True)
+        for number, focus in enumerate(self.focuses(config), 1):
+            moves = start_tree.prefix + focus["moves"]
+            index, _ = self.tree.walk(moves, reference=True)
             start = "position " + self.tree.origin
-            moves = self.tree.prefix + focus["moves"]
             if moves:
                 start += " moves " + " ".join(moves)
             task_tree = ViewTree(config | {"start_position": start})
@@ -86,8 +94,7 @@ class Publications:
                 self.reset(session)
             task_id = kind.split(":", 1)[1] if ":" in kind else None
             if task_id is not None and task_id not in {
-                f["id"]
-                for f in (config or {}).get("sequential_study", {}).get("focuses", [])
+                f["id"] for f in self.focuses(config) if config
             }:
                 raise ValueError("課題が見つかりません")
             db = Path(config["runtime_state_dir"]) / "state.sqlite3" if config else None
@@ -155,6 +162,8 @@ class Publications:
                             if campaign != session:
                                 raise ValueError("Foreign game in publication")
                             moves = json.loads(moves)
+                            if focus_id is None and not config.get("sequential_study"):
+                                focus_id = "anchor"
                             line = (
                                 completed_line(
                                     dict(
@@ -217,6 +226,12 @@ class Publications:
                                     games=self.task_trees[task["id"]].completed,
                                     wins=self.task_trees[task["id"]].nodes[0]["b"],
                                     losses=self.task_trees[task["id"]].nodes[0]["w"],
+                                    black_streak=self.task_trees[
+                                        task["id"]
+                                    ].black_streak,
+                                    best_black_streak=self.task_trees[
+                                        task["id"]
+                                    ].best_black_streak,
                                 )
                                 for task in self.tasks
                             ]

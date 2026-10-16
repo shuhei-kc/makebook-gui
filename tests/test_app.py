@@ -280,7 +280,7 @@ class ServerTests(unittest.TestCase):
             "target_black_streak": 2,
             "tasks": [
                 {"label": "課題1", "moves": []},
-                {"label": "課題2", "moves": "7g7f 3c3d"},
+                {"label": "課題2", "moves": "position startpos moves 7g7f 3c3d"},
             ],
         }
         self.app.start(settings)

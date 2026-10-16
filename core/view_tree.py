@@ -67,6 +67,8 @@ class ViewTree:
         ]
         self.positions = {" ".join(board.sfen().split()[:3]): 0}
         self.completed = 0
+        self.black_streak = 0
+        self.best_black_streak = 0
         self.last_games = {}
 
     def walk(self, moves, reference=False):
@@ -134,6 +136,8 @@ class ViewTree:
             node["b"] += int(result == "black_win")
             node["w"] += int(result == "white_win")
         self.completed += 1
+        self.black_streak = self.black_streak + 1 if result == "black_win" else 0
+        self.best_black_streak = max(self.best_black_streak, self.black_streak)
         self.last_games[str(worker)] = dict(
             game_id=identity,
             moves=moves,
@@ -149,6 +153,8 @@ class ViewTree:
         return dict(
             count=self.completed,
             completed=self.completed,
+            black_streak=self.black_streak,
+            best_black_streak=self.best_black_streak,
             base=self.base,
             origin=self.origin,
             prefix=self.prefix,
