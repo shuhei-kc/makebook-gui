@@ -132,12 +132,6 @@ class Engine:
                 if line.startswith("option name ") and " type " in line:
                     supported.add(line[12:].split(" type ", 1)[0])
             options = dict(self.options)
-            if "BookFile" in supported:
-                options["BookFile"] = "no_book"
-            elif "OwnBook" in supported:
-                options["OwnBook"] = False
-            if "EnteringKingRule" not in supported:
-                options.pop("EnteringKingRule", None)
             for name in ("Threads", "ResignValue"):
                 if name in options and name not in supported:
                     options.pop(name)

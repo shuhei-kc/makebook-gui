@@ -38,6 +38,10 @@ for raw in sys.stdin:
             print(
                 "option name EnteringKingRule type combo default CSARule27 var CSARule27"
             )
+            print("option name FV_SCALE type spin default 24 min 1 max 100")
+            print("option name MultiPV type spin default 1 min 1 max 100")
+            print("option name DrawValueBlack type spin default 0 min -99999 max 99999")
+            print("option name DrawValueWhite type spin default 0 min -99999 max 99999")
         print("usiok", flush=True)
     elif line == "isready":
         if mode == "eof":

@@ -208,7 +208,6 @@ class Runner:
 
         self.sfen_archive = SfenArchive(config)
         options = dict(config["engine"].get("usi_options", {}))
-        options["EnteringKingRule"] = "CSARule27"
         profile = config["engine"]
         self.engine = Engine(
             [profile["executable"], *profile.get("arguments", [])],
@@ -240,7 +239,7 @@ class Runner:
         config = effective_config(self.config, setting["values"])
         old = self.config["engine"]
         new = config["engine"]
-        options = dict(new.get("usi_options", {})) | {"EnteringKingRule": "CSARule27"}
+        options = dict(new.get("usi_options", {}))
         if old["executable"] != new["executable"] or old["cwd"] != new["cwd"]:
             self.engine.close()
             self.engine.command = [new["executable"]]

@@ -36,7 +36,7 @@ py -3.12 -m venv .venv
 
 エンジンが `Threads`・`ResignValue` を宣言しない場合は、その項目を送らずエンジン既定値を使い、保存先の `runtime/workers/*/usi.jsonl` に警告を残します。指定したスレッド数・投了値が適用されるかはエンジンの対応を確認してください。`USI_Hash` は宣言を省略するエンジンにも送信します。
 
-このほか、対応エンジンには内蔵定跡の無効化（`BookFile=no_book` または `OwnBook=false`）と27点法（`EnteringKingRule=CSARule27`）を送ります。評価関数・FV_SCALE・MultiPVなど、その他のエンジンオプションは変更しません。
+自動送信するオプションは、画面で指定した `Threads`・`USI_Hash`・`ResignValue` だけです。内蔵定跡（`BookFile`・`OwnBook`）、`EnteringKingRule`・評価関数・FV_SCALE・MultiPV・DrawValueなど、その他のエンジンオプションは変更しません。
 
 ## Web公開
 

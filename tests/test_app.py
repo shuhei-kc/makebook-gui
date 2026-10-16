@@ -379,14 +379,31 @@ class ServerTests(unittest.TestCase):
                         self.assertFalse(store.candidates())
                     else:
                         first_move = next(
-                            r for r in store.candidates().values() if r["move"] == "7g7f"
+                            r
+                            for r in store.candidates().values()
+                            if r["move"] == "7g7f"
                         )
                         self.assertEqual(first_move["active"], draw == "w")
                 finally:
                     store.close()
                 log = runtime / "workers/1/usi.jsonl"
                 if details:
-                    self.assertIn(" pv 7g7f", log.read_text(encoding="utf-8"))
+                    log_text = log.read_text(encoding="utf-8")
+                    self.assertIn(" pv 7g7f", log_text)
+                    sent_options = [
+                        json.loads(line)["line"]
+                        for line in log_text.splitlines()
+                        if json.loads(line)["direction"] == "in"
+                        and json.loads(line)["line"].startswith("setoption ")
+                    ]
+                    self.assertEqual(
+                        sent_options,
+                        [
+                            "setoption name Threads value 1",
+                            "setoption name USI_Hash value 16",
+                            "setoption name ResignValue value 300",
+                        ],
+                    )
                 else:
                     self.assertFalse(log.exists())
 
