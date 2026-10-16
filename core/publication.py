@@ -10,6 +10,7 @@ import threading
 
 from .exports import book_text
 from .sfen_archive import completed_line
+from .view_tree import ViewTree
 
 
 @dataclass(frozen=True)
@@ -38,10 +39,43 @@ class Publications:
     def reset(self, session):
         self.session = session
         self.last_row = 0
-        self.tree = {"move": "開始局面", "count": 0, "children": {}}
+        self.tree = None
         self.lines = []
         self.cache = {}
         self.seqs = {}
+        self.task_trees = {}
+        self.task_lines = {}
+        self.tasks = []
+
+    def prepare_trees(self, config):
+        self.tree = ViewTree(config)
+        for number, focus in enumerate(
+            config.get("sequential_study", {}).get("focuses", []), 1
+        ):
+            index, _ = self.tree.walk(focus["moves"], reference=True)
+            start = "position " + self.tree.origin
+            moves = self.tree.prefix + focus["moves"]
+            if moves:
+                start += " moves " + " ".join(moves)
+            task_tree = ViewTree(config | {"start_position": start})
+            self.task_trees[focus["id"]] = task_tree
+            self.task_lines[focus["id"]] = []
+            last = moves[-1] if moves else ""
+            self.tasks.append(
+                dict(
+                    id=focus["id"],
+                    n=number,
+                    label=focus["label"],
+                    comment="",
+                    sfen=task_tree.nodes[0]["sfen"],
+                    ply=task_tree.base,
+                    node=self.tree.path(index),
+                    move=self.tree.nodes[index]["label"],
+                    last=([last[2:4]] if "*" in last else [last[:2], last[2:4]])
+                    if last
+                    else [],
+                )
+            )
 
     def read(self, config, kind):
         # One build per revision, shared by all viewers. This lock is never
@@ -50,6 +84,12 @@ class Publications:
             session = config["campaign_id"] if config else None
             if session != self.session:
                 self.reset(session)
+            task_id = kind.split(":", 1)[1] if ":" in kind else None
+            if task_id is not None and task_id not in {
+                f["id"]
+                for f in (config or {}).get("sequential_study", {}).get("focuses", [])
+            }:
+                raise ValueError("課題が見つかりません")
             db = Path(config["runtime_state_dir"]) / "state.sqlite3" if config else None
             if db is None or not db.exists():
                 return Response.make(
@@ -57,7 +97,7 @@ class Publications:
                     if kind == "book.db"
                     else ""
                     if kind == "games.sfen"
-                    else {"move": "開始局面", "count": 0, "children": {}}
+                    else ViewTree({"start_position": "position startpos"}).export()
                 )
             conn = sqlite3.connect(db.as_uri() + "?mode=ro", uri=True, timeout=0.5)
             try:
@@ -80,12 +120,8 @@ class Publications:
                 else:
                     # Completed rows are immutable. Transfer only the moves and
                     # ending; large search-info payloads remain inside SQLite.
-                    prefix = config["start_position"].split()
-                    prefix_length = (
-                        len(prefix) - prefix.index("moves") - 1
-                        if "moves" in prefix
-                        else 0
-                    )
+                    if self.tree is None:
+                        self.prepare_trees(config)
                     rows = conn.execute(
                         """SELECT rowid,
                         json_extract(payload,'$.completed'),
@@ -93,17 +129,33 @@ class Publications:
                         json_extract(payload,'$.moves'),
                         json_extract(payload,'$.origin'),
                         json_extract(payload,'$.reason'),
-                        json_extract(payload,'$.rule_result')
+                        json_extract(payload,'$.rule_result'),
+                        COALESCE(json_extract(payload,'$.worker_id'),1),
+                        json_extract(payload,'$.game_id'),
+                        json_extract(payload,'$.focus.id'),
+                        json_extract(payload,'$.prefix_length')
                         FROM games WHERE rowid>? ORDER BY rowid""",
                         (self.last_row,),
                     )
                     changed = False
-                    for row, completed, campaign, moves, origin, reason, result in rows:
+                    for (
+                        row,
+                        completed,
+                        campaign,
+                        moves,
+                        origin,
+                        reason,
+                        result,
+                        worker,
+                        identity,
+                        focus_id,
+                        prefix_length,
+                    ) in rows:
                         if completed:
                             if campaign != session:
                                 raise ValueError("Foreign game in publication")
                             moves = json.loads(moves)
-                            self.lines.append(
+                            line = (
                                 completed_line(
                                     dict(
                                         origin=origin,
@@ -114,41 +166,67 @@ class Publications:
                                 )
                                 + "\n"
                             )
-                            node = self.tree
-                            node["count"] += 1
-                            for u in moves[prefix_length:]:
-                                node = node["children"].setdefault(
-                                    u, {"move": u, "count": 0, "children": {}}
+                            self.lines.append(line)
+                            self.tree.add(
+                                moves,
+                                result,
+                                identity,
+                                worker,
+                                origin,
+                                reason,
+                                focus_id,
+                                prefix_length,
+                                stop_ply=prefix_length
+                                if focus_id in self.task_trees
+                                else None,
+                            )
+                            if focus_id in self.task_trees:
+                                self.task_trees[focus_id].add(
+                                    moves,
+                                    result,
+                                    identity,
+                                    worker,
+                                    origin,
+                                    reason,
+                                    focus_id,
+                                    prefix_length,
                                 )
-                                node["count"] += 1
+                                self.task_lines[focus_id].append(line)
                             changed = True
                         self.last_row = row
                     if changed:
-                        self.cache.pop("tree", None)
-                        self.cache.pop("games.sfen", None)
+                        for name in list(self.cache):
+                            if name != "book.db":
+                                self.cache.pop(name, None)
+                                self.seqs.pop(name, None)
                     if kind not in self.cache:
                         if kind == "games.sfen":
                             value = "".join(self.lines)
+                        elif kind.startswith("sfen:"):
+                            value = "".join(self.task_lines[task_id])
+                        elif kind.startswith("task:"):
+                            value = self.task_trees[task_id].export() | {
+                                "id": task_id,
+                                "revision": self.last_row,
+                            }
                         else:
-                            flat, stack = [], [(self.tree, -1)]
-                            while stack:
-                                node, parent = stack.pop()
-                                identity = len(flat)
-                                flat.append(
-                                    dict(
-                                        id=identity,
-                                        parent=parent,
-                                        move=node["move"],
-                                        count=node["count"],
-                                    )
+                            tasks = [
+                                dict(
+                                    task,
+                                    sfen_games=self.task_trees[task["id"]].completed,
+                                    games=self.task_trees[task["id"]].completed,
+                                    wins=self.task_trees[task["id"]].nodes[0]["b"],
+                                    losses=self.task_trees[task["id"]].nodes[0]["w"],
                                 )
-                                stack.extend(
-                                    (child, identity)
-                                    for child in reversed(
-                                        list(node["children"].values())
-                                    )
-                                )
-                            value = {"count": self.tree["count"], "nodes": flat}
+                                for task in self.tasks
+                            ]
+                            value = self.tree.export() | {
+                                "revision": self.last_row,
+                                "tasks": tasks,
+                                "target_black_streak": config.get(
+                                    "sequential_study", {}
+                                ).get("target_black_streak"),
+                            }
                         self.cache[kind] = Response.make(value)
                 self.seqs[kind] = seq
                 return self.cache[kind]

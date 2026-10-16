@@ -203,6 +203,11 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.request("/api/settings", public=True)[0], 404)
         self.assertEqual(self.request("/api/start", "POST", {}, valid=False)[0], 403)
         self.assertEqual(self.request("/../app.py", public=True)[0], 404)
+        self.assertEqual(self.request("/manage.js", public=True)[0], 404)
+        html = self.request("/")[1].decode()
+        self.assertLess(html.index('src="/app.js"'), html.index('src="/connect.js"'))
+        self.assertLess(html.index('src="/connect.js"'), html.index('src="/manage.js"'))
+        self.assertIn(b"settings-dialog", html.encode())
 
     def test_invalid_json_shape_and_bad_book_return_400(self):
         for path, value in [
@@ -263,6 +268,41 @@ class ServerTests(unittest.TestCase):
                 release.set()
                 thread.join(5)
         self.assertEqual(result[0][0], 400)
+
+    def test_sequential_tasks_and_streak_target_finish_without_overshoot(self):
+        settings = app.DEFAULTS | {
+            "engine": sys.executable,
+            "engine_arguments": [str(ROOT / "tests/fake_engine.py"), "black_win"],
+            "nodes": 10,
+            "threads": 1,
+            "hash_mb": 16,
+            "parallel": 3,
+            "target_black_streak": 2,
+            "tasks": [
+                {"label": "課題1", "moves": []},
+                {"label": "課題2", "moves": "7g7f 3c3d"},
+            ],
+        }
+        self.app.start(settings)
+        self.wait_for_games(4)
+        self.app.child.wait(timeout=10)
+        state = self.app.status()
+        self.assertEqual(state["completed_games"], 4)
+        self.assertTrue(state["sequential_study"]["done"])
+        self.assertEqual(
+            [t["black_streak"] for t in state["sequential_study"]["tasks"]], [2, 2]
+        )
+        self.assertEqual(
+            json.loads(self.request("/api/tree", public=True)[1])["tasks"][1]["ply"], 2
+        )
+        for identity in ("task-01", "task-02"):
+            code, body = self.request("/api/task_tree?id=" + identity, public=True)
+            self.assertEqual(code, 200, body)
+            self.assertEqual(json.loads(body)["count"], 2)
+            code, body = self.request("/api/task_sfen?id=" + identity, public=True)
+            self.assertEqual(code, 200, body)
+            self.assertEqual(len(body.decode().splitlines()), 2)
+        self.assertEqual(self.request("/api/task_tree?id=unknown", public=True)[0], 400)
 
     def test_fourfold_repetition_excludes_reference_moves(self):
         prefix = "5i5h 5a5b 5h5i 5b5a " * 3

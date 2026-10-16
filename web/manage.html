@@ -1,12 +1,316 @@
 <!doctype html>
-<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>makebook-gui 設定</title><link rel="stylesheet" href="/app.css"><script src="/app.js" defer></script></head>
-<body><header><h1>makebook-gui</h1><p>設定・連続対局</p></header><main>
-<form id="settings"><label>USIエンジンの実行ファイル<input name="engine" required placeholder="C:/engine/YaneuraOu.exe"></label>
-<label>開始局面（USI）<textarea name="position" rows="2" required>position startpos</textarea></label>
-<div class="fields"><label>1手の探索ノード数<input name="nodes" type="number" min="1" value="20000000" required></label><label>エンジンのスレッド数<input name="threads" type="number" min="1" value="4" required></label><label>Hash（MB／エンジン）<input name="hash_mb" type="number" min="1" value="1024" required></label><label>同時対局数<input name="parallel" type="number" min="1" max="8" value="1" required></label><label>投了値<input name="resign" type="number" min="0" value="300" required></label><label>総手数上限<input name="max_plies" type="number" min="1" value="256" required></label></div>
-<label>読み込み定跡DB（任意）<input name="book" placeholder="空欄なら定跡なしから開始"></label>
-<div class="fields"><label>読み込み定跡を固定する側<select name="fixed_side"><option value="">固定しない</option><option value="b">先手</option><option value="w">後手</option></select></label><label>千日手の学習<select name="draw"><option value="ignore">勝敗を付けず、学習しない</option><option value="b">先手負けとして学習</option><option value="w">後手負けとして学習</option></select></label></div>
-<button type="submit">開始・再開</button><button type="button" data-control="pause">現在局後に待機</button><button type="button" data-control="stop_after_games">現在局後に停止</button><p id="message" role="status"></p></form>
-<p>設定を変えて開始すると、新しい保存先を作ります。同じ設定なら保存済みの続きから再開します。</p>
-<p>公開用：<code id="public-url">別途表示された観戦ポート</code>。この操作画面は公開しません。</p>
-<p id="status" role="status">読み込み中</p><nav id="workers" aria-label="対局選択"></nav><div class="columns"><section><h2 id="board-title">現在局面</h2><div id="white-hand" class="hand"></div><div id="board" aria-label="将棋盤"></div><div id="black-hand" class="hand"></div><p id="turn"></p><p id="moves" class="moves"></p><button id="live" type="button">現在の対局へ戻る</button></section><section><h2>対局ツリー</h2><div id="tree"></div></section></div><footer><a href="/book.db" download>定跡DB</a><a href="/games.sfen" download>完了棋譜SFEN</a></footer></main></body></html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>連続対局・定跡生成</title>
+    <link rel="stylesheet" href="/app.css" />
+    <link rel="stylesheet" href="/manage.css" />
+  </head>
+  <body>
+    <header class="top">
+      <div class="brand">
+        <span class="app">makebook-gui</span>
+        <h1 id="title">連続対局・定跡生成</h1>
+      </div>
+      <div class="tally" id="tally"></div>
+      <button class="btn" id="open-settings">設定・開始</button>
+      <div class="conn" id="conn">
+        <span class="dot"></span><span id="conn-text">観戦データを取得中…</span>
+      </div>
+    </header>
+
+    <main>
+      <section class="stage">
+        <nav class="games" id="games" aria-label="観戦する対局"></nav>
+
+        <div class="review" id="review" hidden>
+          <span class="review-label">ツリーの局面を表示中</span>
+          <span class="review-move" id="review-move"></span>
+          <button class="btn btn-accent" id="back-live">
+            観戦に戻る<kbd>Esc</kbd>
+          </button>
+        </div>
+
+        <div class="board-wrap" id="board-wrap">
+          <canvas id="board"></canvas>
+        </div>
+
+        <div class="caption">
+          <div class="caption-main">
+            <div class="now" id="now">—</div>
+            <div class="recent" id="recent"></div>
+          </div>
+          <button
+            class="btn btn-ghost"
+            id="copy"
+            title="この局面までの手順をUSIの position 形式でコピー"
+          >
+            USIをコピー
+          </button>
+          <button
+            class="btn btn-ghost"
+            id="precedent"
+            title="この局面までの手順付きでKiriCompassの前例を開く"
+          >
+            前例
+          </button>
+        </div>
+
+        <div class="notice" id="notice" hidden></div>
+      </section>
+
+      <section class="treepane">
+        <div class="task" id="task">
+          <button class="task-thumb" id="task-thumb" title="課題局面を盤に表示">
+            <canvas id="task-board"></canvas>
+          </button>
+          <div class="task-body">
+            <div class="task-top">
+              <span class="task-no" id="task-no">課題</span>
+              <span class="task-state" id="task-state"></span>
+              <span class="task-pos" id="task-pos"></span>
+              <button class="btn btn-small" id="task-sfen" disabled>
+                課題の棋譜
+              </button>
+              <button
+                class="btn btn-small"
+                id="all-sfen"
+                disabled
+                title="全課題の完了棋譜をSFENで保存"
+              >
+                全課題の棋譜 (SFEN) 0局
+              </button>
+              <a class="btn btn-small" href="/book.db" download>定跡DB</a>
+            </div>
+            <div class="task-name" id="task-name">—</div>
+            <div class="task-comment" id="task-comment"></div>
+            <div class="task-stats" id="task-stats"></div>
+            <div class="task-list" id="task-list" aria-label="課題一覧"></div>
+          </div>
+        </div>
+        <div class="tree-head">
+          <div class="tree-title">
+            <div
+              class="seg"
+              id="scope"
+              role="tablist"
+              aria-label="ツリーの範囲"
+            >
+              <button data-v="full">全体ツリー</button>
+              <button data-v="task" id="scope-task">課題の対局</button>
+            </div>
+            <span class="meta" id="tree-meta"></span>
+            <span
+              class="meta"
+              id="task-tree-loading"
+              role="status"
+              hidden
+            ></span>
+            <button class="btn btn-small" id="tree-sfen" hidden>
+              課題の棋譜
+            </button>
+          </div>
+          <div class="tree-tools">
+            <label class="switch" title="対局の現在位置へ自動でスクロール">
+              <input type="checkbox" id="follow" checked /><span class="track"
+                ><span class="knob"></span></span
+              >自動スクロール
+            </label>
+            <button class="btn btn-ghost" id="to-live">現在局面へ</button>
+            <div class="zoom">
+              <button class="btn btn-icon" id="zoom-out" aria-label="縮小">
+                −
+              </button>
+              <span id="zoom-value">100%</span>
+              <button class="btn btn-icon" id="zoom-in" aria-label="拡大">
+                ＋
+              </button>
+            </div>
+            <div
+              class="tree-fold"
+              id="task-tree-fold"
+              role="group"
+              aria-label="課題の枝を開閉"
+              hidden
+            >
+              <select
+                class="btn"
+                id="fold-limit"
+                aria-label="閉じる対象の前例数"
+              >
+                <option value="root10" selected>ルートの10％以下</option>
+                <option value="1">1局以下</option>
+                <option value="3">3局以下</option>
+                <option value="5">5局以下</option>
+                <option value="10">10局以下</option>
+                <option value="20">20局以下</option>
+              </select>
+              <button
+                class="btn"
+                id="fold-rare"
+                title="選択中と進行中の各対局への経路を残し、指定局数以下の枝を閉じる"
+              >
+                閉じる
+              </button>
+              <button
+                class="btn"
+                id="open-all-task"
+                title="この課題の枝を全部開く"
+              >
+                全部開く
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="tree-wrap" id="tree-wrap">
+          <canvas id="tree" tabindex="0"></canvas>
+          <div class="hint">
+            ドラッグ・スクロールで移動　ピンチ／⌘＋スクロールで拡縮　ダブルクリックで開閉　←→↑↓で手を移動
+          </div>
+        </div>
+        <div class="detail" id="detail">
+          <div class="detail-node">
+            <div class="detail-head" id="detail-head">—</div>
+            <div class="detail-tags" id="detail-tags"></div>
+            <div class="detail-comment" id="detail-comment"></div>
+          </div>
+          <div class="detail-next">
+            <div class="detail-sub">次の手</div>
+            <ol class="next-list" id="next-list"></ol>
+          </div>
+        </div>
+      </section>
+    </main>
+    <dialog id="settings-dialog" aria-labelledby="settings-title">
+      <div class="dialog-head">
+        <h2 id="settings-title">対局設定</h2>
+        <button class="btn btn-icon" id="close-settings" aria-label="閉じる">
+          ×
+        </button>
+      </div>
+      <form id="settings">
+        <label
+          >配信タイトル<input name="title" maxlength="120" required
+        /></label>
+        <label
+          >USIエンジンの実行ファイル<input
+            name="engine"
+            required
+            placeholder="C:/engine/YaneuraOu.exe"
+        /></label>
+        <label
+          >開始局面（USI）<textarea name="position" rows="2" required>
+position startpos</textarea
+          >
+        </label>
+        <div class="fields">
+          <label
+            >1手の探索ノード数<input
+              name="nodes"
+              type="number"
+              min="1"
+              value="20000000"
+              required /></label
+          ><label
+            >エンジンのスレッド数<input
+              name="threads"
+              type="number"
+              min="1"
+              value="4"
+              required /></label
+          ><label
+            >Hash（MB／エンジン）<input
+              name="hash_mb"
+              type="number"
+              min="1"
+              value="1024"
+              required /></label
+          ><label
+            >同時対局数<input
+              name="parallel"
+              type="number"
+              min="1"
+              max="8"
+              value="1"
+              required /></label
+          ><label
+            >投了値<input
+              name="resign"
+              type="number"
+              min="0"
+              value="300"
+              required /></label
+          ><label
+            >総手数上限<input
+              name="max_plies"
+              type="number"
+              min="1"
+              value="256"
+              required
+          /></label>
+        </div>
+        <label
+          >読み込み定跡DB（任意）<input
+            name="book"
+            placeholder="空欄なら定跡なしから開始"
+        /></label>
+        <div class="fields">
+          <label
+            >読み込み定跡を固定する側<select name="fixed_side">
+              <option value="">固定しない</option>
+              <option value="b">先手</option>
+              <option value="w">後手</option>
+            </select></label
+          ><label
+            >千日手の学習<select name="draw">
+              <option value="ignore">勝敗を付けず、学習しない</option>
+              <option value="b">先手負けとして学習</option>
+              <option value="w">後手負けとして学習</option>
+            </select></label
+          >
+        </div>
+        <fieldset class="task-config">
+          <legend>課題と連勝目標</legend>
+          <label
+            >各課題の先手連勝数<input
+              name="target_black_streak"
+              type="number"
+              min="1"
+              max="1000000"
+              required
+              value="100"
+          /></label>
+          <p>
+            課題を上から順に検証し、指定の先手連勝数を達成したら次へ進みます。課題なしなら共通起点で連続対局します。
+          </p>
+          <div id="task-editor"></div>
+          <button class="btn" id="add-task" type="button">課題を追加</button>
+          <p>
+            追加手順は共通起点からのUSI指し手です。共通起点につながる position
+            形式の手順も指定できます。
+          </p>
+        </fieldset>
+        <p class="save-note">
+          条件や課題を変えて開始すると、新しい保存先を作ります。同じ設定なら続きから再開します。
+        </p>
+        <button class="btn btn-accent" type="submit">開始・再開</button
+        ><button class="btn" type="button" data-control="pause">
+          現在局後に待機</button
+        ><button class="btn" type="button" data-control="stop_after_games">
+          現在局後に停止
+        </button>
+        <p id="message" role="status"></p>
+        <div class="sharing">
+          <span>公開用の観戦画面</span><code id="public-url"></code
+          ><small>この操作画面は公開しないでください。</small>
+        </div>
+      </form>
+    </dialog>
+    <div class="toast" id="toast" hidden></div>
+    <script src="/app.js" defer></script>
+    <script src="/tasks.js" defer></script>
+    <script src="/connect.js" defer></script>
+    <script src="/manage.js" defer></script>
+  </body>
+</html>

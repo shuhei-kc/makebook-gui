@@ -54,7 +54,7 @@ for raw in sys.stdin:
         if mode == "loop":
             print("bestmove " + loop_cycle[loop_index % 4], flush=True)
             loop_index += 1
-        elif mode in ("game", "game_slow", "game_delay"):
+        elif mode in ("game", "game_slow", "game_delay", "black_win"):
             import cshogi
 
             board = current_board()
@@ -62,7 +62,11 @@ for raw in sys.stdin:
                 time.sleep(float(sys.argv[2]) if mode == "game_delay" else 0.15)
             move = (
                 "resign"
-                if board.move_number > 3
+                if (
+                    board.turn == cshogi.WHITE
+                    if mode == "black_win"
+                    else board.move_number > 3
+                )
                 else cshogi.move_to_usi(next(iter(board.legal_moves)))
             )
             print("bestmove " + move, flush=True)

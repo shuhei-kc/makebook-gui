@@ -1,0 +1,130 @@
+dialog {
+  width: min(760px, calc(100vw - 32px));
+  max-height: calc(100dvh - 48px);
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
+  padding: 0;
+  color: var(--ink);
+  background: var(--surface);
+  box-shadow: 0 24px 90px #0009;
+}
+dialog::backdrop {
+  background: #0009;
+  backdrop-filter: blur(3px);
+}
+.dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 22px;
+  border-bottom: 1px solid var(--line);
+}
+.dialog-head h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+}
+#settings {
+  padding: 8px 22px 20px;
+}
+#settings label {
+  display: block;
+  margin: 10px 0;
+  color: var(--ink-2);
+  font-size: 12px;
+}
+#settings input,
+#settings textarea,
+#settings select {
+  display: block;
+  width: 100%;
+  margin-top: 5px;
+  padding: 8px 10px;
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+}
+#settings input:focus,
+#settings textarea:focus,
+#settings select:focus {
+  outline: 1px solid var(--accent);
+  border-color: var(--accent);
+}
+#settings textarea {
+  resize: vertical;
+  min-height: 58px;
+  font-family: ui-monospace, monospace;
+}
+.fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0 14px;
+}
+#settings .btn {
+  margin: 12px 6px 0 0;
+}
+#message {
+  color: var(--danger);
+  overflow-wrap: anywhere;
+}
+#message:empty {
+  display: none;
+}
+.sharing {
+  display: grid;
+  gap: 4px;
+  margin-top: 18px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+}
+.sharing code {
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+@media (max-width: 600px) {
+  .fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  #settings {
+    padding: 8px 16px 16px;
+  }
+}
+
+.task-config {
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  margin: 16px 0 8px;
+  padding: 10px 12px;
+}
+.task-config legend {
+  color: var(--ink);
+  padding: 0 6px;
+  font-weight: 600;
+}
+.task-config p {
+  color: var(--muted);
+  font-size: 11px;
+  margin: 8px 0;
+}
+.task-edit {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+.task-edit-head {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+}
+.task-edit-head label {
+  flex: 1;
+  margin: 0 !important;
+}
+.task-edit-head .btn {
+  margin: 16px 0 0 !important;
+  padding: 4px 7px;
+}

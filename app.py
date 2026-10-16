@@ -42,6 +42,9 @@ DEFAULTS = dict(
     max_plies=256,
     book="",
     fixed_side="",
+    title="連続対局・定跡生成",
+    target_black_streak=100,
+    tasks=[],
 )
 
 
@@ -58,6 +61,7 @@ def checked_settings(raw):
         ("parallel", 1, 8),
         ("resign", 0, 99999),
         ("max_plies", 1, 10000),
+        ("target_black_streak", 1, 1000000),
     ]:
         if type(s[name]) is not int or not low <= s[name] <= high:
             raise ValueError(f"{name}: {low}〜{high}の整数を指定してください")
@@ -81,6 +85,56 @@ def checked_settings(raw):
         book = Path(s["book"]).expanduser()
         book = book if book.is_absolute() else ROOT / book
         s["book"] = str(book.resolve())
+    if (
+        not isinstance(s["title"], str)
+        or not s["title"].strip()
+        or len(s["title"]) > 120
+    ):
+        raise ValueError("配信タイトルは1〜120文字で指定してください")
+    if not isinstance(s["tasks"], list) or len(s["tasks"]) > 256:
+        raise ValueError("課題は256件までの一覧で指定してください")
+    _, common_origin, common_moves, *_ = position_board(s["position"])
+    tasks = []
+    for number, task in enumerate(s["tasks"], 1):
+        if (
+            not isinstance(task, dict)
+            or not isinstance(task.get("label"), str)
+            or not task["label"].strip()
+        ):
+            raise ValueError(f"課題{number}の名前を指定してください")
+        moves = task.get("moves", [])
+        if isinstance(moves, str):
+            words = moves.strip().split()
+            if words and words[0] in ("position", "startpos", "sfen"):
+                _, origin, full, *_ = position_board(moves)
+                if origin != common_origin or full[: len(common_moves)] != common_moves:
+                    raise ValueError(
+                        f"課題{number}: 共通起点につながるUSI手順を指定してください"
+                    )
+                words = full[len(common_moves) :]
+            elif words[:1] == ["moves"]:
+                words = words[1:]
+            moves = words
+        tasks.append(
+            dict(
+                id=task.get("id", f"task-{number:02d}"),
+                label=task["label"].strip(),
+                moves=moves,
+            )
+        )
+    s["tasks"] = tasks
+    if tasks:
+        from core.sequential_study import validate
+
+        validate(
+            dict(
+                start_position=s["position"],
+                max_total_plies=s["max_plies"],
+                sequential_study=dict(
+                    target_black_streak=s["target_black_streak"], focuses=tasks
+                ),
+            )
+        )
     return s
 
 
@@ -112,7 +166,7 @@ def campaign(settings, directory, prepared_book=None):
             for key, moves in book.items()
             if key.split()[1] == s["fixed_side"]
         ]
-    return dict(
+    config = dict(
         single_worker_version=1,
         campaign_id=directory.name,
         runtime_state_dir=str(directory / "runtime"),
@@ -145,6 +199,11 @@ def campaign(settings, directory, prepared_book=None):
             },
         ),
     )
+    if s.get("tasks"):
+        config["sequential_study"] = dict(
+            target_black_streak=s["target_black_streak"], focuses=deepcopy(s["tasks"])
+        )
+    return config
 
 
 def initialize_book(config, prepared_book=None):
@@ -333,6 +392,18 @@ class Application:
                     "phase": "starting" if self.running() else "stopped",
                     "completed_games": 0,
                     "games": [],
+                    "session": self.config["campaign_id"],
+                    "conditions": {
+                        name: self.settings[name]
+                        for name in (
+                            "nodes",
+                            "threads",
+                            "hash_mb",
+                            "parallel",
+                            "resign",
+                            "max_plies",
+                        )
+                    },
                 }
             result = {
                 k: raw.get(k)
@@ -345,6 +416,23 @@ class Application:
                 )
             }
             result["session"] = self.config["campaign_id"]
+            result["title"] = self.settings["title"]
+            from core.sequential_study import initial_progress
+
+            result["sequential_study"] = raw.get(
+                "sequential_study"
+            ) or initial_progress(self.config)
+            result["conditions"] = {
+                name: self.settings[name]
+                for name in (
+                    "nodes",
+                    "threads",
+                    "hash_mb",
+                    "parallel",
+                    "resign",
+                    "max_plies",
+                )
+            }
             result["stale"] = (
                 raw.get("phase") != "stopped"
                 and time.time() - raw.get("updated_unix", 0) > 10
@@ -367,6 +455,11 @@ class Application:
                             worker=game.get("worker_id", int(checkpoint.parent.name)),
                             sfen=b.sfen(),
                             moves=game["moves"],
+                            game_id=game["game_id"],
+                            origin=game["origin"],
+                            prefix_length=game.get("prefix_length", 0),
+                            info=(game.get("selections") or [{}])[-1].get("info"),
+                            focus_id=game.get("focus", {}).get("id"),
                         )
                     )
                 except (OSError, ValueError, KeyError):
@@ -446,7 +539,7 @@ def handler_for(app, admin):
             response = app.publication(kind)
             content_type = (
                 "application/json; charset=utf-8"
-                if kind == "tree"
+                if kind == "tree" or kind.startswith("task:")
                 else "text/plain; charset=utf-8"
             )
             if self.headers.get("If-None-Match") == response.etag:
@@ -486,6 +579,13 @@ def handler_for(app, admin):
                     return self.send(app.status())
                 if url.path == "/api/tree":
                     return self.published("tree")
+                if url.path in ("/api/task_tree", "/api/task_sfen"):
+                    identity = parse_qs(url.query).get("id", [""])[0]
+                    if url.path == "/api/task_tree":
+                        return self.published("task:" + identity)
+                    return self.published(
+                        "sfen:" + identity, attachment=identity + ".sfen"
+                    )
                 if url.path == "/api/position":
                     return self.send(
                         {
@@ -500,22 +600,28 @@ def handler_for(app, admin):
                 files = {
                     "/": "manage.html" if admin else "index.html",
                     "/app.js": "app.js",
+                    "/connect.js": "connect.js",
+                    "/tasks.js": "tasks.js",
                     "/app.css": "app.css",
+                    "/pieces.png": "pieces.png",
+                    "/manage.js": "manage.js" if admin else None,
+                    "/manage.css": "manage.css" if admin else None,
                 }
-                if url.path not in files:
+                if not files.get(url.path):
                     return self.send({"error": "Not found"}, 404)
                 name = files[url.path]
                 mime = {
                     ".html": "text/html",
                     ".js": "text/javascript",
                     ".css": "text/css",
+                    ".png": "image/png",
                 }[Path(name).suffix]
                 return self.send(
                     (ROOT / "web" / name).read_bytes(),
                     content_type=mime + "; charset=utf-8",
                 )
             except ValueError as error:
-                if url.path == "/api/position":
+                if url.path in ("/api/position", "/api/task_tree", "/api/task_sfen"):
                     return self.send({"error": str(error)}, 400)
                 logging.exception("Invalid publication data")
                 return self.send(
