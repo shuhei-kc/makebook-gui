@@ -38,7 +38,8 @@ DEFAULTS = dict(
     hash_mb=1024,
     parallel=1,
     resign=300,
-    draw="ignore",
+    draw="b",
+    save_search_details=False,
     max_plies=256,
     book="",
     fixed_side="",
@@ -66,7 +67,9 @@ def checked_settings(raw):
         if type(s[name]) is not int or not low <= s[name] <= high:
             raise ValueError(f"{name}: {low}〜{high}の整数を指定してください")
     if s["draw"] not in ("ignore", "b", "w") or s["fixed_side"] not in ("", "b", "w"):
-        raise ValueError("千日手・固定する側の指定を確認してください")
+        raise ValueError("引き分けの学習・固定する側の指定を確認してください")
+    if type(s["save_search_details"]) is not bool:
+        raise ValueError("探索詳細の保存はオン・オフで指定してください")
     if s["fixed_side"] and not s["book"]:
         raise ValueError("固定する場合は読み込み定跡DBを指定してください")
     if not isinstance(s["engine_arguments"], list) or not all(
@@ -184,8 +187,13 @@ def campaign(settings, directory, prepared_book=None):
             "repetition": {"ignore": "draw", "b": "white_win", "w": "black_win"}[
                 s["draw"]
             ],
-            "max_total_plies": "unresolved",
+            "max_total_plies": {
+                "ignore": "unresolved",
+                "b": "white_win",
+                "w": "black_win",
+            }[s["draw"]],
         },
+        save_search_details=s["save_search_details"],
         sfen_archive=str(directory / "games.sfen"),
         engine=dict(
             executable=s["engine"],

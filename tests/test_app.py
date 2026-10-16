@@ -326,10 +326,69 @@ class ServerTests(unittest.TestCase):
                 ).fetchone()[0]
             )
             self.assertEqual(game["reason"], "repetition")
+            self.assertEqual(game["rule_result"], "draw")
+            self.assertEqual(game["research_result"], "white_win")
             self.assertEqual(game["repetition_history_start_ply"], 12)
             self.assertEqual(len(game["moves"]), 24)
         finally:
             store.close()
+
+    def test_move_limit_learning_and_optional_search_details(self):
+        for draw, details in (("b", False), ("w", True), ("ignore", False)):
+            with self.subTest(draw=draw, details=details):
+                settings = app.DEFAULTS | {
+                    "engine": sys.executable,
+                    "engine_arguments": [str(ROOT / "tests/fake_engine.py")],
+                    "nodes": 10,
+                    "threads": 1,
+                    "hash_mb": 16,
+                    "max_plies": 1,
+                    "draw": draw,
+                    "save_search_details": details,
+                    "tasks": [{"label": "起点", "moves": []}],
+                }
+                self.app.start(settings)
+                self.wait_for_games(1)
+                self.app.control("stop_after_games")
+                self.app.child.wait(timeout=10)
+                runtime = Path(self.app.config["runtime_state_dir"])
+                store = Store(runtime / "state.sqlite3")
+                try:
+                    game = json.loads(
+                        store.db.execute(
+                            "SELECT payload FROM games WHERE json_extract(payload,'$.completed')=1 ORDER BY rowid LIMIT 1"
+                        ).fetchone()[0]
+                    )
+                    self.assertEqual(game["reason"], "max_total_plies")
+                    self.assertEqual(game["rule_result"], "unresolved")
+                    self.assertEqual(
+                        game["research_result"],
+                        {"b": "white_win", "w": "black_win", "ignore": "unresolved"}[
+                            draw
+                        ],
+                    )
+                    self.assertEqual(
+                        store.service()["sequential_study"]["tasks"][0]["black_streak"],
+                        0,
+                    )
+                    info = game["selections"][0]["info"]
+                    self.assertIn("score", info)
+                    self.assertEqual("pv" in info, details)
+                    self.assertEqual("nodes" in info, details)
+                    if draw == "ignore":
+                        self.assertFalse(store.candidates())
+                    else:
+                        first_move = next(
+                            r for r in store.candidates().values() if r["move"] == "7g7f"
+                        )
+                        self.assertEqual(first_move["active"], draw == "w")
+                finally:
+                    store.close()
+                log = runtime / "workers/1/usi.jsonl"
+                if details:
+                    self.assertIn(" pv 7g7f", log.read_text(encoding="utf-8"))
+                else:
+                    self.assertFalse(log.exists())
 
     def test_import_is_read_once_and_resume_does_not_need_original_book(self):
         book = Path(self.tmp.name) / "input.db"

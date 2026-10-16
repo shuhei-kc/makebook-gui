@@ -36,6 +36,7 @@ class Engine:
         init_timeout=120,
         ready_timeout=600,
         stop_grace=2,
+        log_search_details=True,
     ):
         self.command = command
         self.cwd = cwd
@@ -50,12 +51,15 @@ class Engine:
         self.log_sink = SafeLog(self.log_path) if self.log_path else None
         self.job = None
         self.dropped_output = 0
+        self.log_search_details = log_search_details
 
     @property
     def log_error(self):
         return self.log_sink.error if self.log_sink else None
 
     def log(self, direction, line):
+        if not self.log_search_details and direction in ("in", "out"):
+            return
         if self.log_sink:
             self.log_sink.write(
                 json.dumps(

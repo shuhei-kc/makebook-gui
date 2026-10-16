@@ -263,9 +263,9 @@ position startpos</textarea
               <option value="w">後手</option>
             </select></label
           ><label
-            >千日手の学習<select name="draw">
+            >引き分けの学習（千日手・手数上限）<select name="draw">
               <option value="ignore">勝敗を付けず、学習しない</option>
-              <option value="b">先手負けとして学習</option>
+              <option value="b" selected>先手負けとして学習</option>
               <option value="w">後手負けとして学習</option>
             </select></label
           >
@@ -291,6 +291,12 @@ position startpos</textarea
             形式の手順も指定できます。
           </p>
         </fieldset>
+        <label class="checkbox-setting">
+          <input
+            type="checkbox"
+            name="save_search_details"
+          />探索詳細を保存する（USI通信ログ・PVなど）
+        </label>
         <p class="save-note">
           条件や課題を変えて開始すると、新しい保存先を作ります。同じ設定なら続きから再開します。
         </p>

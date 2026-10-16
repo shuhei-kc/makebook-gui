@@ -59,6 +59,15 @@ dialog::backdrop {
   min-height: 58px;
   font-family: ui-monospace, monospace;
 }
+#settings .checkbox-setting {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+#settings .checkbox-setting input {
+  width: auto;
+  margin: 0;
+}
 .fields {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

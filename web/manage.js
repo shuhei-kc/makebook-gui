@@ -8,7 +8,8 @@ async function manage() {
   if (!response.ok) throw new Error(data.error || "設定を読み込めませんでした");
   for (const [key, value] of Object.entries(data.settings)) {
     const field = form.elements.namedItem(key);
-    if (field) field.value = value;
+    if (field?.type === "checkbox") field.checked = value;
+    else if (field) field.value = value;
   }
   $("public-url").textContent = data.public_url;
   if (data.warning) $("message").textContent = data.warning;
@@ -69,6 +70,7 @@ async function manage() {
     event.preventDefault();
     const button = form.querySelector('[type="submit"]');
     const values = Object.fromEntries(new FormData(form));
+    values.save_search_details = form.elements.save_search_details.checked;
     for (const key of [
       "nodes",
       "threads",

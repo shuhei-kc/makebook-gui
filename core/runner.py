@@ -218,6 +218,7 @@ class Runner:
             init_timeout=profile["init_timeout_seconds"],
             ready_timeout=profile["ready_timeout_seconds"],
             stop_grace=profile["stop_grace_seconds"],
+            log_search_details=config.get("save_search_details", False),
         )
         self.controller = Controller(config, store, self)
 
@@ -700,6 +701,14 @@ class Runner:
                         profile["search_timeout_seconds"],
                         self.controls,
                     )
+                    if not config.get("save_search_details", False):
+                        # Keep only the small display score; PV and search counters
+                        # are optional diagnostics, not learning/recovery inputs.
+                        info = (
+                            {"score": info["score"]}
+                            if info and "score" in info
+                            else None
+                        )
                     source = "engine"
                 side = "b" if board.turn == cshogi.BLACK else "w"
                 if move in ("resign", "win"):
