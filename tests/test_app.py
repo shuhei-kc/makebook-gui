@@ -1,0 +1,197 @@
+import ast
+from copy import deepcopy
+from http.client import HTTPConnection
+import hashlib
+import json
+from pathlib import Path
+import random
+import sys
+import tempfile
+import threading
+import time
+from types import SimpleNamespace
+import unittest
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+import app
+from core.learning import Candidates, legacy_learn
+from core.store import Store
+
+
+def upstream_oracle(book, selections, loser):
+    source = ast.parse((ROOT / "docs/upstream/makebook2.py").read_text(encoding="utf-8-sig"))
+    loops = [n for n in ast.walk(source) if isinstance(n, ast.For) and
+             ast.unparse(n.iter) == "reversed(tempbook)"]
+    # Importing the original script would prompt and start engines. Compile only
+    # its unchanged learning loop instead of reimplementing the expected result.
+    code = compile(ast.Module(body=[loops[0]], type_ignores=[]), "makebook2-learning", "exec")
+    key = lambda x: "sfen " + x + " 0"
+    obj = SimpleNamespace(book={key(k): deepcopy(v) for k, v in book.items()})
+    env = dict(Shogi=obj, tempbook=[(key(x["key"]), x["move"]) for x in selections],
+               loseturn=loser, bookpass=0)
+    exec(code, env)
+    return {" ".join(k.split()[1:-1]): v for k, v in obj.book.items()}
+
+
+class LearningTests(unittest.TestCase):
+    def test_pinned_upstream_bytes(self):
+        directory = ROOT / "docs/upstream"
+        source = json.loads((directory / "source.json").read_text(encoding="utf-8"))
+        for name, expected in source["sha256"].items():
+            self.assertEqual(hashlib.sha256((directory / name).read_bytes()).hexdigest(), expected)
+
+    def test_initial_reference_and_import_counts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            initial = "lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b -"
+            book = directory / "input.db"
+            board = app.cshogi.Board()
+            board.push_usi("7g7f")
+            board.push_usi("3c3d")
+            other = " ".join(board.sfen().split()[:3])
+            book.write_text("#YANEURAOU-DB2016 1.00\nsfen " + initial + " 0\n7g7f none 0 32 999\n2g2f none 0 32 777\nsfen " + other + " 0\n2g2f none 0 32 888\n", encoding="utf-8")
+            settings = app.checked_settings(app.DEFAULTS | {"engine": sys.executable, "book": str(book),
+                                                            "position": "position startpos moves 7g7f 3c3d"})
+            for fixed in [False, True]:
+                settings["fixed_side"] = "b" if fixed else ""
+                session = directory / ("fixed" if fixed else "learned")
+                session.mkdir()
+                cfg_path = session / "campaign.json"
+                cfg_path.write_text(json.dumps(app.campaign(settings, session)), encoding="utf-8")
+                config = app.load_config(cfg_path)
+                app.initialize_book(config)
+                store = Store(Path(config["runtime_state_dir"]) / "state.sqlite3")
+                try:
+                    state = store.candidates()
+                    if fixed:
+                        self.assertEqual(sorted(r["wins"] for r in state.values()), [1000, 1000])
+                        self.assertEqual(config["fixed_rules"][0]["moves"][0]["usi"], "7g7f")
+                    else:
+                        self.assertEqual(sorted(r["wins"] for r in state.values()), [1, 1000, 1000])
+                        self.assertEqual([r["move"] for r in state.values() if r["key"] == initial], ["7g7f"])
+                finally:
+                    store.close()
+
+    def test_literal_upstream_loop_randomized(self):
+        rng = random.Random(54)
+        keys = [f"board{i} {side} -" for i in range(7) for side in ("b", "w")]
+        for _ in range(500):
+            before = {k: {f"move{m}": rng.randint(1, 1000) for m in range(rng.randint(1, 3))}
+                      for k in rng.sample(keys, rng.randint(0, len(keys)))}
+            selections = [dict(key=rng.choice(keys), move="move" + str(rng.randrange(4)),
+                               source=rng.choice(["engine", "book", "fixed"]))
+                          for _ in range(rng.randint(1, 35))]
+            loser = rng.choice(["b", "w"])
+            actual = deepcopy(before)
+            legacy_learn(actual, selections, loser)
+            self.assertEqual(actual, upstream_oracle(before, selections, loser))
+
+    def test_public_metadata_matches_upstream_even_with_old_generations(self):
+        learner = Candidates()
+        original = {"A b -": {"x": 10}, "B w -": {"x": 4, "y": 7}, "C w -": {"z": 8}}
+        for key, moves in original.items():
+            for move, count in moves.items():
+                row = learner.register(key, move)
+                row.update(wins=count, generation=9)
+        selections = [dict(key="C w -", move="z", source="fixed", generation=1),
+                      dict(key="A b -", move="x", source="book", generation=1),
+                      dict(key="B w -", move="x", source="engine", generation=None)]
+        learner.learn(selections, "b", "test-game")
+        active = {k: {r["move"]: r["wins"] for r in rows.values() if r["active"]}
+                  for k, rows in learner.by_key.items()}
+        active = {k: v for k, v in active.items() if v}
+        self.assertEqual(active, upstream_oracle(original, selections, "w"))
+        self.assertEqual(active["C w -"]["z"], 9)
+
+
+class ServerTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.app = app.Application(Path(self.tmp.name))
+        self.servers = []
+        for admin in [True, False]:
+            server = app.ThreadingHTTPServer(("127.0.0.1", 0), app.handler_for(self.app, admin))
+            self.servers.append(server)
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+
+    def tearDown(self):
+        if self.app.child and self.app.child.poll() is None:
+            self.app.control("stop_after_games")
+            try:
+                self.app.child.wait(timeout=10)
+            except app.subprocess.TimeoutExpired:
+                self.app.child.terminate()
+                self.app.child.wait(timeout=5)
+        for server in self.servers:
+            server.shutdown()
+            server.server_close()
+        self.tmp.cleanup()
+
+    def request(self, path, method="GET", body=None, public=False, valid=True):
+        port = self.servers[int(public)].server_port
+        conn = HTTPConnection("127.0.0.1", port, timeout=10)
+        headers = {}
+        if body is not None:
+            headers = {"Content-Type": "application/json", "Origin": f"http://127.0.0.1:{port}" if valid else "https://other.example",
+                       "X-Makebook-Token": self.app.token}
+            body = json.dumps(body)
+        conn.request(method, path, body=body, headers=headers)
+        result = conn.getresponse()
+        code, data = result.status, result.read()
+        conn.close()
+        return code, data
+
+    def test_public_is_read_only_and_does_not_expose_settings(self):
+        self.assertEqual(self.request("/api/start", "POST", {}, public=True)[0], 405)
+        self.assertEqual(self.request("/api/settings", public=True)[0], 404)
+        self.assertEqual(self.request("/api/start", "POST", {}, valid=False)[0], 403)
+        self.assertEqual(self.request("/../app.py", public=True)[0], 404)
+
+    def test_start_publish_stop_restart_and_download(self):
+        settings = app.DEFAULTS | {"engine": sys.executable, "engine_arguments": [str(ROOT / "tests/fake_engine.py"), "game_delay", "0.03"],
+                                   "nodes": 10, "threads": 1, "hash_mb": 16, "parallel": 2}
+        code, data = self.request("/api/start", "POST", settings)
+        self.assertEqual(code, 200, data)
+        self.wait_for_games(4)
+        state = json.loads(self.request("/api/state", public=True)[1])
+        self.assertNotIn("engine", state)
+        self.assertNotIn("runtime_state_dir", state)
+        self.assertNotIn("token", state)
+        self.assertTrue(state["completed_games"] >= 4)
+        changed = settings | {"nodes": 11}
+        self.assertEqual(self.request("/api/start", "POST", changed)[0], 400)
+        tree = json.loads(self.request("/api/tree", public=True)[1])
+        self.assertGreaterEqual(tree["count"], 4)
+        self.assertIn(b"#YANEURAOU-DB2016", self.request("/book.db", public=True)[1])
+        games = self.request("/games.sfen", public=True)[1].decode()
+        self.assertGreaterEqual(len(games.splitlines()), 4)
+        self.assertTrue(all(line.endswith("resign") for line in games.splitlines()))
+        self.request("/api/control", "POST", {"operation": "stop_after_games"})
+        self.app.child.wait(timeout=10)
+        before = self.app.status()["completed_games"]
+        # Simulate the browser/control process restarting; the same data resumes.
+        self.app = app.Application(Path(self.tmp.name))
+        self.app.start(settings)
+        self.wait_for_games(before + 2)
+        store = Store(Path(self.app.config["runtime_state_dir"]) / "state.sqlite3")
+        try:
+            self.assertEqual(store.service()["learning_policy"], "legacy_backtrack")
+        finally:
+            store.close()
+
+    def wait_for_games(self, count):
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            if self.app.status().get("completed_games", 0) >= count:
+                return
+            if self.app.child and self.app.child.poll() is not None:
+                log = Path(self.app.config["runtime_state_dir"]).parent / "launch.log"
+                self.fail(log.read_text(encoding="utf-8", errors="replace"))
+            time.sleep(.05)
+        runtime = Path(self.app.config["runtime_state_dir"])
+        self.fail((runtime / "manager.log").read_text(encoding="utf-8", errors="replace")[-6000:])
+
+
+if __name__ == "__main__":
+    unittest.main()

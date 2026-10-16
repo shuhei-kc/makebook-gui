@@ -1,0 +1,7 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>makebook-gui</title><link rel="stylesheet" href="/app.css"><script src="/app.js" defer></script></head>
+<body><header><h1>makebook-gui</h1><p>連続対局・定跡生成</p></header>
+<main><p id="status" role="status">読み込み中</p><nav id="workers" aria-label="対局選択"></nav>
+<div class="columns"><section><h2 id="board-title">現在局面</h2><div id="white-hand" class="hand"></div><div id="board" aria-label="将棋盤"></div><div id="black-hand" class="hand"></div><p id="turn"></p><p id="moves" class="moves"></p><button id="live" type="button">現在の対局へ戻る</button></section>
+<section><h2>対局ツリー</h2><div id="tree"></div></section></div>
+<footer><a href="/book.db" download>定跡DB</a><a href="/games.sfen" download>完了棋譜SFEN</a></footer></main></body></html>

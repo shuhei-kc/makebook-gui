@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>makebook-gui 設定</title><link rel="stylesheet" href="/app.css"><script src="/app.js" defer></script></head>
+<body><header><h1>makebook-gui</h1><p>設定・連続対局</p></header><main>
+<form id="settings"><label>USIエンジンの実行ファイル<input name="engine" required placeholder="C:/engine/YaneuraOu.exe"></label>
+<label>開始局面（USI）<textarea name="position" rows="2" required>position startpos</textarea></label>
+<div class="fields"><label>1手の探索ノード数<input name="nodes" type="number" min="1" value="20000000" required></label><label>エンジンのスレッド数<input name="threads" type="number" min="1" value="4" required></label><label>Hash（MB／エンジン）<input name="hash_mb" type="number" min="1" value="1024" required></label><label>同時対局数<input name="parallel" type="number" min="1" max="8" value="1" required></label><label>投了値<input name="resign" type="number" min="0" value="300" required></label><label>総手数上限<input name="max_plies" type="number" min="1" value="256" required></label></div>
+<label>読み込み定跡DB（任意）<input name="book" placeholder="空欄なら定跡なしから開始"></label>
+<div class="fields"><label>読み込み定跡を固定する側<select name="fixed_side"><option value="">固定しない</option><option value="b">先手</option><option value="w">後手</option></select></label><label>千日手の学習<select name="draw"><option value="ignore">勝敗を付けず、学習しない</option><option value="b">先手負けとして学習</option><option value="w">後手負けとして学習</option></select></label></div>
+<button type="submit">開始・再開</button><button type="button" data-control="pause">現在局後に待機</button><button type="button" data-control="stop_after_games">現在局後に停止</button><p id="message" role="status"></p></form>
+<p>設定を変えて開始すると、新しい保存先を作ります。同じ設定なら保存済みの続きから再開します。</p>
+<p>公開用：<code id="public-url">別途表示された観戦ポート</code>。この操作画面は公開しません。</p>
+<p id="status" role="status">読み込み中</p><nav id="workers" aria-label="対局選択"></nav><div class="columns"><section><h2 id="board-title">現在局面</h2><div id="white-hand" class="hand"></div><div id="board" aria-label="将棋盤"></div><div id="black-hand" class="hand"></div><p id="turn"></p><p id="moves" class="moves"></p><button id="live" type="button">現在の対局へ戻る</button></section><section><h2>対局ツリー</h2><div id="tree"></div></section></div><footer><a href="/book.db" download>定跡DB</a><a href="/games.sfen" download>完了棋譜SFEN</a></footer></main></body></html>
