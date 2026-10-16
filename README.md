@@ -75,4 +75,4 @@ tests/        本家ロジック比較・模擬エンジン検証
 .venv\Scripts\python -B -m unittest discover -s tests
 ```
 
-MIT License。エンジン・評価関数・第三者の定跡・認証情報は同梱しません。
+MIT License。出典と駒画像については [THIRD_PARTY.md](THIRD_PARTY.md) を参照してください。エンジン・評価関数・第三者の定跡・認証情報は同梱しません。
