@@ -516,9 +516,12 @@ function renderAllSfen(state) {
   button.disabled = !state.completed;
   button.textContent =
     (state.tasks.length ? "全課題の棋譜" : "全棋譜") +
-    " (SFEN) " +
+    "(sfens.txt) " +
     state.completed +
     "局";
+  button.title = state.completed
+    ? `完了棋譜 ${state.completed}局をまとめて sfens.txt で保存`
+    : "まだ保存できる完了棋譜がありません";
 }
 function downloadSfen(id) {
   if (id)
@@ -533,7 +536,7 @@ $("tree-sfen").addEventListener("click", (event) =>
   downloadSfen(event.currentTarget.dataset.id),
 );
 $("all-sfen").addEventListener("click", () => {
-  window.location.href = spectatorUrl("/games.sfen");
+  window.location.href = spectatorUrl("/sfens.txt");
 });
 $("task-list").addEventListener("click", (event) => {
   const button = event.target.closest("button[data-id]");

@@ -484,6 +484,18 @@ class ServerTests(unittest.TestCase):
         games = self.request("/games.sfen", public=True)[1].decode()
         self.assertGreaterEqual(len(games.splitlines()), 4)
         self.assertTrue(all(line.endswith("resign") for line in games.splitlines()))
+        download = HTTPConnection("127.0.0.1", self.servers[1].server_port, timeout=5)
+        try:
+            download.request("GET", "/sfens.txt")
+            response = download.getresponse()
+            self.assertEqual(response.status, 200)
+            self.assertEqual(
+                response.getheader("Content-Disposition"),
+                'attachment; filename="sfens.txt"',
+            )
+            self.assertTrue(response.read().startswith(games.encode("utf-8")))
+        finally:
+            download.close()
         self.request("/api/control", "POST", {"operation": "stop_after_games"})
         self.app.child.wait(timeout=10)
         before = self.app.status()["completed_games"]

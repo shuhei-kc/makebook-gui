@@ -67,7 +67,7 @@ def checked_settings(raw):
         if type(s[name]) is not int or not low <= s[name] <= high:
             raise ValueError(f"{name}: {low}〜{high}の整数を指定してください")
     if s["draw"] not in ("ignore", "b", "w") or s["fixed_side"] not in ("", "b", "w"):
-        raise ValueError("引き分けの学習・固定する側の指定を確認してください")
+        raise ValueError("引き分けの扱い・固定する側の指定を確認してください")
     if type(s["save_search_details"]) is not bool:
         raise ValueError("探索詳細の保存はオン・オフで指定してください")
     if s["fixed_side"] and not s["book"]:
@@ -605,6 +605,8 @@ def handler_for(app, admin):
                 if url.path in ("/book.db", "/games.sfen"):
                     name = url.path[1:]
                     return self.published(name, attachment=name)
+                if url.path == "/sfens.txt":
+                    return self.published("games.sfen", attachment="sfens.txt")
                 files = {
                     "/": "manage.html" if admin else "index.html",
                     "/app.js": "app.js",
