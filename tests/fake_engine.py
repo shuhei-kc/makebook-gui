@@ -55,8 +55,17 @@ for raw in sys.stdin:
             break
         if mode == "slow":
             time.sleep(0.3)
-        if mode == "loop":
-            print("bestmove " + loop_cycle[loop_index % 4], flush=True)
+        if mode in ("loop", "checking_loop", "white_checking_loop", "broken_checking_loop"):
+            cycle = (
+                ("5a4a", "5c4c", "4a5a", "4c5c")
+                if mode == "checking_loop"
+                else ("5i6i", "5g6g", "6i5i", "6g5g")
+                if mode == "white_checking_loop"
+                else ("5a4a", "5c5d", "4a3a", "5d5c", "3a4a", "5c4c", "4a5a", "4c5c")
+                if mode == "broken_checking_loop"
+                else loop_cycle
+            )
+            print("bestmove " + cycle[loop_index % len(cycle)], flush=True)
             loop_index += 1
         elif mode in ("game", "game_slow", "game_delay", "black_win"):
             import cshogi

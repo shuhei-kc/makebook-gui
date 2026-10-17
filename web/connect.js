@@ -60,6 +60,8 @@ function asGame(raw, worker, ended = false) {
         mate: "詰み",
         repetition: "千日手",
         perpetual_check: "連続王手",
+        loop_abort: "循環2回",
+        checking_loop_abort: "連続王手2回（王手側負け扱い）",
         max_total_plies: "手数上限",
         max_plies: "手数上限",
         declaration: "入玉宣言",

@@ -132,10 +132,11 @@ def validate_record(game, config):
             if rule!='unresolved' or research!=config['research_outcomes']['max_total_plies']:
                 raise ValueError('Invalid durable maximum-ply adjudication')
             return
-        elif reason in ('repetition','perpetual_check','loop_abort'):
+        elif reason in ('repetition','perpetual_check','loop_abort','checking_loop_abort'):
             end=repetition(keys,checks,repetition_limit)
-            if reason=='loop_abort':
-                if repetition_limit!=2 or end!=('repetition','draw') or rule!='unresolved':
+            if reason in ('loop_abort','checking_loop_abort'):
+                expected_reason='perpetual_check' if reason=='checking_loop_abort' else 'repetition'
+                if repetition_limit!=2 or not end or end[0]!=expected_reason or rule!='unresolved':
                     raise ValueError('Invalid durable early-loop adjudication')
             elif not end or end[0]!=reason or rule!=end[1]:raise ValueError('Invalid durable repetition')
             expected_research=config['research_outcomes']['repetition'] if reason in ('repetition','loop_abort') else end[1]

@@ -53,12 +53,14 @@ def position_board(position):
     return board, origin, moves, keys, checks
 
 
-def repetition(keys, checks, limit=4):
+def repetition(keys, checks, limit=2):
     if limit not in (2, 4):
         raise ValueError("Repetition limit must be 2 or 4")
     hits = [index for index, key in enumerate(keys) if key == keys[-1]]
     if len(hits) < limit:
         return None
+    # Check every move by each side over the repeated interval. At two
+    # occurrences this supplies a book-update loss, not an official foul.
     interval = checks[hits[-limit] :]
     checking = []
     for side in ("b", "w"):
@@ -600,8 +602,7 @@ class Runner:
         }
         board, origin, prefix, keys, checks = game_start(config, plan)
         repetition_limit = config.get("repetition_limit", 2)
-        # Reference moves connect the exported tree; repetition starts here,
-        # for both fourfold repetition and the optional twofold study rule.
+        # Reference moves connect the exported tree; repetition starts here.
         keys, checks = [key_of(board)], []
         self.current_game = game["game_id"]
         moves = list(prefix)
@@ -635,9 +636,14 @@ class Runner:
                     raise EngineAborted("Immediate abort requested")
                 end = repetition(keys, checks, repetition_limit)
                 if end:
-                    early_loop = repetition_limit == 2 and end[0] == "repetition"
+                    early_loop = repetition_limit == 2
+                    reason = (
+                        "checking_loop_abort"
+                        if early_loop and end[0] == "perpetual_check"
+                        else "loop_abort" if early_loop else end[0]
+                    )
                     game.update(
-                        reason="loop_abort" if early_loop else end[0],
+                        reason=reason,
                         rule_result="unresolved" if early_loop else end[1],
                         completed=True,
                     )

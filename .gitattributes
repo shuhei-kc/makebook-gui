@@ -1,3 +1,5 @@
 * text=auto eol=lf
 *.cmd text eol=crlf
 docs/upstream/* -text
+# Keep pinned upstream Python sources byte-for-byte, including their whitespace.
+docs/upstream/*.py -whitespace

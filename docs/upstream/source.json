@@ -3,10 +3,12 @@
   "commit": "8b215c174d0a9ce828a33f4978c52abf73dd625a",
   "files": [
     "makebook2.py",
-    "LICENSE"
+    "LICENSE",
+    "Board.py"
   ],
   "sha256": {
     "makebook2.py": "9fa87ae12808cb633545360d50c284fd762c0a7d218eac66b1b5ba7611743afa",
-    "LICENSE": "bb0098cb4db999e426d47d7fdcccf66e48e226d1df83ebbd0432117940f23348"
+    "LICENSE": "bb0098cb4db999e426d47d7fdcccf66e48e226d1df83ebbd0432117940f23348",
+    "Board.py": "4a6082674c7d39bfa58f97fd87e12ad4c3388d09423176b743e667da38d9c7a0"
   }
 }

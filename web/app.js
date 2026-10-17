@@ -1589,7 +1589,7 @@ const tree = {
       ctx.fillText(
         this.view === "task"
           ? "この課題の対局はまだありません"
-          : "kiriを読み込み中…",
+          : "ツリーを読み込み中…",
         w / 2,
         h / 2,
       );

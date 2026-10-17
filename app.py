@@ -182,7 +182,7 @@ def campaign(settings, directory, prepared_book=None):
         initial_book=s["book"],
         initial_book_fixed=bool(s["fixed_side"]),
         max_total_plies=s["max_plies"],
-        repetition_limit=4,
+        repetition_limit=2,
         research_outcomes={
             "repetition": {"ignore": "draw", "b": "white_win", "w": "black_win"}[
                 s["draw"]
@@ -253,6 +253,38 @@ def initialize_book(config, prepared_book=None):
             )
         finally:
             store.close()
+
+
+def ensure_twofold(config):
+    """Apply the corrected rule to future games through the normal journal."""
+    database = Path(config["runtime_state_dir"]) / "state.sqlite3"
+    db = sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True)
+    try:
+        row = db.execute("SELECT value FROM metadata WHERE key='service'").fetchone()
+    finally:
+        db.close()
+    service = json.loads(row[0]) if row else {}
+    saved = service.get("runtime_settings")
+    revision = saved["revision"] if saved else 0
+    limit = (
+        saved["values"].get("repetition_limit", 4)
+        if saved
+        else config.get("repetition_limit", 2)
+    )
+    if limit == 2:
+        return
+    submit(
+        config,
+        {
+            "schema_version": 1,
+            "task_id": "twofold-rule-v1-" + str(revision),
+            "kind": "control",
+            "target": {"campaign_id": config["campaign_id"]},
+            "operation": "configure",
+            "expected_settings_revision": revision,
+            "changes": {"repetition_limit": 2},
+        },
+    )
 
 
 class Application:
@@ -329,6 +361,7 @@ class Application:
                 config = load_config(cfg)
                 initialize_book(config, imported)
             with self.guard:
+                ensure_twofold(config)
                 if new_session:
                     atomic_write(
                         self.current,
@@ -373,6 +406,8 @@ class Application:
                 "stop_after_games",
             }:
                 raise ValueError("対局を開始してください")
+            if operation == "resume":
+                ensure_twofold(self.config)
             task_id = "web-" + uuid.uuid4().hex
             submit(
                 self.config,

@@ -209,6 +209,15 @@ class ServerTests(unittest.TestCase):
         self.assertLess(html.index('src="/connect.js"'), html.index('src="/manage.js"'))
         self.assertIn(b"settings-dialog", html.encode())
 
+    def test_control_resume_also_checks_twofold_migration(self):
+        self.app.config = {"campaign_id": "test-control"}
+        with patch.object(app, "ensure_twofold") as migrate, patch.object(app, "submit"):
+            self.app.control("resume")
+            migrate.assert_called_once_with(self.app.config)
+            migrate.reset_mock()
+            self.app.control("pause")
+            migrate.assert_not_called()
+
     def test_invalid_json_shape_and_bad_book_return_400(self):
         for path, value in [
             ("/api/control", []),
@@ -304,7 +313,7 @@ class ServerTests(unittest.TestCase):
             self.assertEqual(len(body.decode().splitlines()), 2)
         self.assertEqual(self.request("/api/task_tree?id=unknown", public=True)[0], 400)
 
-    def test_fourfold_repetition_excludes_reference_moves(self):
+    def test_twofold_repetition_excludes_reference_moves(self):
         prefix = "5i5h 5a5b 5h5i 5b5a " * 3
         settings = app.DEFAULTS | {
             "engine": sys.executable,
@@ -325,11 +334,23 @@ class ServerTests(unittest.TestCase):
                     "SELECT payload FROM games WHERE json_extract(payload,'$.completed')=1 ORDER BY rowid LIMIT 1"
                 ).fetchone()[0]
             )
-            self.assertEqual(game["reason"], "repetition")
-            self.assertEqual(game["rule_result"], "draw")
+            self.assertEqual(self.app.config["repetition_limit"], 2)
+            self.assertEqual(game["settings"]["repetition_limit"], 2)
+            self.assertEqual(game["reason"], "loop_abort")
+            self.assertEqual(game["rule_result"], "unresolved")
             self.assertEqual(game["research_result"], "white_win")
             self.assertEqual(game["repetition_history_start_ply"], 12)
-            self.assertEqual(len(game["moves"]), 24)
+            self.assertEqual(len(game["moves"]), 16)
+            self.assertEqual(len(game["selections"]), 4)
+            from core.durable_games import validate_record
+
+            validate_record(game, self.app.config)
+            continued = deepcopy(game)
+            continued["moves"] += game["moves"][-4:]
+            continued["selections"] += game["selections"]
+            continued["total_plies"] += 4
+            with self.assertRaisesRegex(ValueError, "continued after first repeated"):
+                validate_record(continued, self.app.config)
         finally:
             store.close()
 
@@ -390,6 +411,18 @@ class ServerTests(unittest.TestCase):
                 if details:
                     log_text = log.read_text(encoding="utf-8")
                     self.assertIn(" pv 7g7f", log_text)
+                    sent = [
+                        json.loads(line)["line"]
+                        for line in log_text.splitlines()
+                        if json.loads(line)["direction"] == "in"
+                    ]
+                    self.assertEqual(sent.count("isready"), 1)
+                    self.assertNotIn("usinewgame", sent)
+                    positions = [line for line in sent if line.startswith("position ")]
+                    self.assertTrue(positions)
+                    self.assertTrue(all(line.startswith("position sfen ") for line in positions))
+                    self.assertTrue(all(" moves " not in line for line in positions))
+                    self.assertTrue(all(line.split()[-1] == "1" for line in positions))
                     sent_options = [
                         json.loads(line)["line"]
                         for line in log_text.splitlines()
@@ -437,6 +470,50 @@ class ServerTests(unittest.TestCase):
         ):
             self.app.start(settings)
         self.wait_for_games(before + 1)
+
+    def test_resuming_old_fourfold_session_only_changes_future_games(self):
+        settings = app.DEFAULTS | {
+            "engine": sys.executable,
+            "engine_arguments": [str(ROOT / "tests/fake_engine.py"), "game_delay", "0.03"],
+            "nodes": 10,
+            "threads": 1,
+            "hash_mb": 16,
+        }
+        original_campaign = app.campaign
+
+        def old_campaign(*args, **kwargs):
+            return original_campaign(*args, **kwargs) | {"repetition_limit": 4}
+
+        with patch.object(app, "campaign", side_effect=old_campaign), patch.object(
+            app, "ensure_twofold"
+        ):
+            self.app.start(settings)
+        self.wait_for_games(2)
+        self.app.control("stop_after_games")
+        self.app.child.wait(timeout=10)
+        runtime = Path(self.app.config["runtime_state_dir"])
+        store = Store(runtime / "state.sqlite3")
+        try:
+            before = dict(store.db.execute("SELECT id,payload FROM games"))
+            self.assertTrue(before)
+            self.assertTrue(all(json.loads(g)["settings"]["repetition_limit"] == 4 for g in before.values()))
+        finally:
+            store.close()
+        self.app = app.Application(Path(self.tmp.name))
+        self.app.start(settings)
+        self.wait_for_games(len(before) + 1)
+        self.app.control("stop_after_games")
+        self.app.child.wait(timeout=10)
+        store = Store(runtime / "state.sqlite3")
+        try:
+            after = dict(store.db.execute("SELECT id,payload FROM games"))
+            self.assertTrue(all(after[identity] == payload for identity, payload in before.items()))
+            new = [json.loads(g) for identity, g in after.items() if identity not in before]
+            self.assertTrue(new)
+            self.assertTrue(all(g["settings"]["repetition_limit"] == 2 for g in new))
+            self.assertEqual(store.service()["runtime_settings"]["values"]["repetition_limit"], 2)
+        finally:
+            store.close()
 
     def test_public_etag_and_gzip(self):
         port = self.servers[1].server_port
