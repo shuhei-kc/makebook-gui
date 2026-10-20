@@ -1172,3 +1172,30 @@ a.btn {
     gap: 3px;
   }
 }
+
+/* Phones: scroll the page so the board can use the full width. */
+@media (max-width: 600px) {
+  html,
+  body {
+    height: auto;
+  }
+  body {
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+  main {
+    display: block;
+  }
+  .board-wrap {
+    flex: none;
+    aspect-ratio: 12.6 / 9.7;
+  }
+  .tree-title {
+    flex-wrap: wrap;
+    gap: 6px 10px;
+  }
+  .tree-wrap {
+    flex: none;
+    height: 60vh;
+  }
+}
