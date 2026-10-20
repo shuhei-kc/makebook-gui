@@ -287,6 +287,39 @@ def ensure_twofold(config):
     )
 
 
+def discard_stale_controls(config):
+    """A pause or stop left unread by a stopped manager must not cancel a start."""
+    queue = Path(config.get("queue_dir", Path(config["runtime_state_dir"]) / "tasks"))
+    try:
+        with ManagerLock(config["runtime_state_dir"]):
+            for path in sorted((queue / "inbox").glob("*.task.json")):
+                try:
+                    request = json.loads(path.read_text(encoding="utf-8-sig"))
+                except (OSError, ValueError):
+                    continue  # The manager rejects unreadable requests itself.
+                if not isinstance(request, dict) or request.get("kind") != "control":
+                    continue
+                if request.get("operation") not in (
+                    "pause",
+                    "stop_after_games",
+                    "abort_now",
+                ):
+                    continue
+                token = uuid.uuid4().hex
+                result = {
+                    "input_file": path.name,
+                    "state": "rejected",
+                    "error": "Superseded by a later start before a manager read it",
+                }
+                atomic_write(
+                    queue / "rejected" / (token + ".result.json"),
+                    json.dumps(result, ensure_ascii=False) + "\n",
+                )
+                os.replace(path, queue / "rejected" / (token + ".task.json"))
+    except RuntimeError:
+        pass  # A running manager reads its own mailbox in order.
+
+
 class Application:
     def __init__(self, data):
         self.data = Path(data).resolve()
@@ -373,6 +406,7 @@ class Application:
                     self.settings, self.config, self.config_path = settings, config, cfg
                     self.startup_warning = ""
                 else:
+                    discard_stale_controls(config)
                     self.control("resume")
                 log_path = Path(config["runtime_state_dir"]).parent / "launch.log"
                 flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(
@@ -408,7 +442,8 @@ class Application:
                 raise ValueError("対局を開始してください")
             if operation == "resume":
                 ensure_twofold(self.config)
-            task_id = "web-" + uuid.uuid4().hex
+            # The manager reads its inbox in file-name order; keep clicks in order.
+            task_id = f"web-{time.time_ns():020d}-{uuid.uuid4().hex[:8]}"
             submit(
                 self.config,
                 {

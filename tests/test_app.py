@@ -586,6 +586,34 @@ class ServerTests(unittest.TestCase):
         finally:
             store.close()
 
+    def test_controls_sent_while_stopped_do_not_cancel_the_next_start(self):
+        settings = app.DEFAULTS | {
+            "engine": sys.executable,
+            "engine_arguments": [
+                str(ROOT / "tests/fake_engine.py"),
+                "game_delay",
+                "0.03",
+            ],
+            "nodes": 10,
+            "threads": 1,
+            "hash_mb": 16,
+        }
+        self.app.start(settings)
+        self.wait_for_games(1)
+        self.app.control("stop_after_games")
+        self.app.child.wait(timeout=10)
+        # Nothing reads these until the next start; that start must still play.
+        first = self.app.control("pause")["task_id"]
+        second = self.app.control("stop_after_games")["task_id"]
+        self.assertLess(first, second)
+        before = self.app.status()["completed_games"]
+        self.app.start(settings)
+        self.wait_for_games(before + 2)
+        self.assertNotEqual(self.app.status()["phase"], "paused")
+        queue = Path(self.app.config["queue_dir"])
+        self.assertEqual(list((queue / "inbox").glob("*.task.json")), [])
+        self.assertEqual(len(list((queue / "rejected").glob("*.task.json"))), 2)
+
     def wait_for_games(self, count):
         deadline = time.monotonic() + 20
         while time.monotonic() < deadline:
