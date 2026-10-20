@@ -2,6 +2,8 @@
 
 比較元は [tayayan/HiraganaSuisho](https://github.com/tayayan/HiraganaSuisho) の `makebook2.py` と依存先の `Board.py`、コミット `8b215c174d0a9ce828a33f4978c52abf73dd625a`。元コード・MIT表記・SHA-256を `upstream/` に保存しています。
 
+この文書では、本家（makebook2.py）に対してこのアプリを「公開版」と呼びます。使い方は [README](../README.md) を参照してください。
+
 ## 定跡の選択・更新
 
 | 項目 | 本家と公開版の動作 | 確認箇所 |
